@@ -1,0 +1,3 @@
+{"dt":0,"event":"UserPromptSubmit"}
+{"dt":2187,"event":"PreToolUse","tool":"Bash"}
+{"dt":2291,"event":"PermissionRequest","tool":"Bash"}

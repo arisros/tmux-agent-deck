@@ -1,0 +1,7 @@
+{"dt":0,"event":"UserPromptSubmit"}
+{"dt":2788,"event":"PreToolUse","tool":"AskUserQuestion"}
+{"dt":2797,"event":"PermissionRequest","tool":"AskUserQuestion"}
+{"dt":8875,"event":"Notification","notification_type":"permission_prompt"}
+{"dt":11978,"event":"PostToolUse","tool":"AskUserQuestion"}
+{"dt":13188,"event":"Stop","background_tasks":0}
+{"dt":15395,"event":"SubagentStop","background_tasks":0,"subagent":true}

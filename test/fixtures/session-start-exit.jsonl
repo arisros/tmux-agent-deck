@@ -1,0 +1,4 @@
+{"dt":0,"event":"SessionStart","source":"startup"}
+{"dt":11319,"event":"UserPromptSubmit"}
+{"dt":13986,"event":"Stop","background_tasks":0}
+{"dt":48929,"event":"SessionEnd","reason":"prompt_input_exit"}

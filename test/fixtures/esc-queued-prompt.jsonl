@@ -1,0 +1,6 @@
+{"dt":0,"event":"UserPromptSubmit"}
+{"dt":2440,"event":"PreToolUse","tool":"Bash"}
+{"dt":2596,"event":"PermissionRequest","tool":"Bash"}
+{"dt":7200,"event":"UserPromptSubmit"}
+{"dt":24042,"event":"Stop","background_tasks":0}
+{"dt":27427,"event":"SubagentStop","background_tasks":0,"subagent":true}

@@ -1,0 +1,12 @@
+{"dt":0,"event":"UserPromptSubmit"}
+{"dt":3433,"event":"PreToolUse","tool":"Agent"}
+{"dt":3452,"event":"SubagentStart","agent_type":"Explore","subagent":true}
+{"dt":3469,"event":"PostToolUse","tool":"Agent"}
+{"dt":5605,"event":"PreToolUse","tool":"Bash","agent_type":"Explore","subagent":true}
+{"dt":5805,"event":"PostToolUse","tool":"Bash","agent_type":"Explore","subagent":true}
+{"dt":6467,"event":"Stop","background_tasks":1}
+{"dt":8019,"event":"SubagentStop","agent_type":"Explore","background_tasks":1,"subagent":true}
+{"dt":8037,"event":"UserPromptSubmit"}
+{"dt":9441,"event":"SubagentStop","background_tasks":0,"subagent":true}
+{"dt":10508,"event":"Stop","background_tasks":0}
+{"dt":13251,"event":"SubagentStop","background_tasks":0,"subagent":true}
