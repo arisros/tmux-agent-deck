@@ -131,6 +131,15 @@ func runTmuxInit(_ []string) error {
 		`if-shell -F "#{&&:#{@deck_sidebar_pane},#{!=:#{@deck_sidebar_window},#{window_id}}}" ` +
 			`"run-shell -b 'tmux join-pane -d -f -h -b -l #{@deck-sidebar-width} -s #{@deck_sidebar_pane} -t #{window_id} ` +
 			`&& tmux set-option -t #{q:session_id} @deck_sidebar_window #{window_id}'"`})
+	// Swaps, rotations and layout changes move the sidebar like any pane;
+	// it pins itself back. The condition runs in tmux, so only a change in
+	// the sidebar's own window starts anything.
+	pin := `if-shell -F "#{&&:#{@deck_sidebar_pane},#{==:#{@deck_sidebar_window},#{window_id}}}" ` +
+		`"run-shell -b '` + bin + ` sidebar pin --session #{q:session_id}'"`
+	// window-layout-changed covers them all: tmux has no after- hook for
+	// swap-pane, rotate-window or join-pane. The pin itself changes the
+	// layout once more, and then finds the sidebar in place.
+	cmds = append(cmds, []string{"set-hook", "-g", "window-layout-changed" + hookIndex, pin})
 	// Any focus change wakes open sidebars, so the "you are here" mark moves
 	// at once. wait-for runs inside tmux: no process is started.
 	for _, h := range []string{"after-select-pane", "session-window-changed", "client-session-changed"} {

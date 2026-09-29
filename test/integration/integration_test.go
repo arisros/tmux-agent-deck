@@ -291,3 +291,38 @@ func TestSidebarDoesNotStealFocus(t *testing.T) {
 		t.Errorf("active pane moved from %s to %s", before, got)
 	}
 }
+
+// Swapping, rotating or re-laying out panes moves the sidebar like any pane;
+// it must come back as the full-height left column.
+func TestSidebarSurvivesSwapsAndLayouts(t *testing.T) {
+	h := newHarness(t)
+	sess, w1 := h.opt("alpha", "session_id"), h.opt("alpha", "window_id")
+	h.tmux("split-window", "-d", "-t", w1, "sleep 100000")
+	h.tmux("split-window", "-d", "-v", "-t", w1, "sleep 100000")
+	h.deck("", "sidebar", "toggle", "--session", sess, "--window", w1)
+	sb := h.tmux("show-options", "-qv", "-t", "alpha", "@deck_sidebar_pane")
+	pinned := func() bool {
+		return h.opt(sb, "window_id") == w1 && h.opt(sb, "pane_at_left") == "1" &&
+			h.opt(sb, "pane_height") == h.opt(w1, "window_height")
+	}
+	h.eventually(pinned, "sidebar pinned at start")
+	other := ""
+	for _, p := range strings.Split(h.tmux("list-panes", "-t", w1, "-F", "#{pane_id}"), "\n") {
+		if p != sb {
+			other = p
+		}
+	}
+	steps := [][]string{
+		{"swap-pane", "-s", sb, "-t", other},
+		{"rotate-window", "-t", w1},
+		{"select-layout", "-t", w1, "tiled"},
+		{"select-layout", "-t", w1, "even-vertical"},
+	}
+	for _, step := range steps {
+		h.tmux(step...)
+		h.eventually(pinned, "sidebar pinned after "+step[0])
+	}
+	if got := len(strings.Split(h.tmux("list-panes", "-t", w1, "-F", "#{pane_id}"), "\n")); got != 4 {
+		t.Errorf("window has %d panes, want the 3 work panes and the sidebar", got)
+	}
+}

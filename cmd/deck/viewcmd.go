@@ -204,6 +204,8 @@ func runSidebar(args []string) error {
 		return sidebarFollow(c, *session, *window)
 	case "run":
 		return sidebarRun(c, *session)
+	case "pin":
+		return sidebarPin(c, *session)
 	}
 	return fmt.Errorf("unknown sidebar command %q", args[0])
 }
@@ -389,8 +391,12 @@ func sidebarRun(c tmux.Client, session string) (err error) {
 			load(true)
 		case <-winch:
 			// Closing the last other pane resizes the sidebar to the full
-			// window: the moment it is alone.
+			// window: the moment it is alone. A rotation moves it into
+			// another slot, which also resizes it: pin it back.
 			load(false)
+			if !alone {
+				_ = sidebarPin(c, session)
+			}
 		}
 		if alone {
 			moved, err := leaveEmptyWindow(c, session, self)
@@ -507,4 +513,33 @@ func logFailure(view string, err *error) {
 	if *err != nil {
 		logView(fmt.Sprintf("%s: error: %v args=%q", view, *err, os.Args), nil)
 	}
+}
+
+// sidebarPin puts the sidebar back as the full-height left column after a
+// swap, rotation or layout change moved it: tmux cannot exempt a pane from
+// those, so the sidebar returns to its place once they are done.
+func sidebarPin(c tmux.Client, session string) error {
+	p := sidebarPane(c, session)
+	if p == "" {
+		return nil
+	}
+	out, err := c.Run("display-message", "-p", "-t", p, "#{window_id} #{pane_at_left} #{pane_height} #{window_height}")
+	if err != nil {
+		return err
+	}
+	f := strings.Fields(out)
+	if len(f) != 4 || (f[1] == "1" && f[2] == f[3]) {
+		return nil // already the full-height left column
+	}
+	window := f[0]
+	// break-pane, then join-pane back: the only way to make a pane the full-
+	// height left column of its own window again. The sidebar process keeps
+	// running across both.
+	if _, err := c.Run("break-pane", "-d", "-s", p); err != nil {
+		return err
+	}
+	return c.Batch([][]string{
+		{"join-pane", "-d", "-f", "-h", "-b", "-l", sidebarWidth(c), "-s", p, "-t", window},
+		{"set-option", "-t", session, "@deck_sidebar_window", window},
+	})
 }
