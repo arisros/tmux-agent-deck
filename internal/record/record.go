@@ -31,6 +31,8 @@ type Entry struct {
 	Reason           string   `json:"reason,omitempty"`
 	AgentType        string   `json:"agent_type,omitempty"`
 	StopHookActive   *bool    `json:"stop_hook_active,omitempty"`
+	BackgroundTasks  *int     `json:"background_tasks,omitempty"`
+	SessionCrons     *int     `json:"session_crons,omitempty"`
 	Keys             []string `json:"keys"`
 }
 
@@ -78,6 +80,8 @@ func FromHook(r io.Reader, pane string, now time.Time) (Entry, error) {
 		Reason:           p.Reason,
 		AgentType:        p.AgentType,
 		StopHookActive:   p.StopHookActive,
+		BackgroundTasks:  count(fields["background_tasks"]),
+		SessionCrons:     count(fields["session_crons"]),
 		Keys:             keys,
 	}, nil
 }
@@ -113,6 +117,30 @@ func DefaultDir() string {
 		base = filepath.Join(home, ".local", "state")
 	}
 	return filepath.Join(base, "tmux-agent-deck", "record")
+}
+
+// count reports how many items a field holds without keeping any of them, so
+// "Stop while background work still runs" is visible in the trace. The field's
+// shape is undocumented, hence the tolerance for list, object, or number.
+func count(raw json.RawMessage) *int {
+	if raw == nil || string(raw) == "null" {
+		return nil
+	}
+	var list []json.RawMessage
+	if json.Unmarshal(raw, &list) == nil {
+		n := len(list)
+		return &n
+	}
+	var obj map[string]json.RawMessage
+	if json.Unmarshal(raw, &obj) == nil {
+		n := len(obj)
+		return &n
+	}
+	var n int
+	if json.Unmarshal(raw, &n) == nil {
+		return &n
+	}
+	return nil
 }
 
 func shortHash(s string) string {

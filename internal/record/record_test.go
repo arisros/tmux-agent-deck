@@ -94,3 +94,45 @@ func TestAppendWritesOneLinePerEntry(t *testing.T) {
 		t.Errorf("mode = %v, want 0600", fi.Mode().Perm())
 	}
 }
+
+func TestFromHookCountsBackgroundWorkWithoutKeepingIt(t *testing.T) {
+	cases := []struct {
+		field string
+		want  *int
+	}{
+		{`"background_tasks":[{"id":"b1","command":"go test ./lora/..."},{"id":"b2"}]`, intp(2)},
+		{`"background_tasks":{"b1":{"command":"sleep 99"}}`, intp(1)},
+		{`"background_tasks":[]`, intp(0)},
+		{`"background_tasks":3`, intp(3)},
+		{`"background_tasks":null`, nil},
+		{`"other":1`, nil},
+	}
+	for _, c := range cases {
+		in := `{"hook_event_name":"Stop",` + c.field + `,"session_crons":[{"cron":"* * * * *"}]}`
+		e, err := FromHook(strings.NewReader(in), "", now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if (e.BackgroundTasks == nil) != (c.want == nil) || (c.want != nil && *e.BackgroundTasks != *c.want) {
+			t.Errorf("%s: background_tasks = %v, want %v", c.field, deref(e.BackgroundTasks), deref(c.want))
+		}
+		if e.SessionCrons == nil || *e.SessionCrons != 1 {
+			t.Errorf("%s: session_crons = %v, want 1", c.field, deref(e.SessionCrons))
+		}
+		out, _ := json.Marshal(e)
+		for _, leak := range []string{"lora", "sleep", "* * *", "b1"} {
+			if strings.Contains(string(out), leak) {
+				t.Errorf("entry leaks %q: %s", leak, out)
+			}
+		}
+	}
+}
+
+func intp(n int) *int { return &n }
+
+func deref(p *int) any {
+	if p == nil {
+		return nil
+	}
+	return *p
+}
