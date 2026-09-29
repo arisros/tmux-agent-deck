@@ -34,6 +34,14 @@ type List struct {
 	Confirming bool
 	// Current is the pane the user is in, marked apart from the cursor.
 	Current string
+	// Top is the first row the sidebar shows; it only moves to keep the
+	// cursor (or, unfocused, the current pane) in view, so redraws never jump.
+	Top int
+	// scrolled is set by the wheel, which usually reaches an unfocused
+	// sidebar: the view then stays where the user put it until keys or a
+	// pane switch take over again.
+	scrolled    bool
+	lastCurrent string
 }
 
 // Visible is All narrowed by the filter.
@@ -94,6 +102,19 @@ const (
 
 // Handle applies a key: vim motions and arrows, "/" to filter, enter to jump.
 func (l *List) Handle(k Key) Outcome {
+	switch k.Name {
+	case "wheelup", "wheeldown":
+		d := 1
+		if k.Name == "wheelup" {
+			d = -1
+		}
+		l.Cursor += d
+		l.Top += d
+		l.scrolled = true
+		l.clamp(len(l.Visible()))
+		return Stay
+	}
+	l.scrolled = false
 	if l.Confirming {
 		l.Confirming = false
 		if k.Rune == 'y' || k.Rune == 'Y' {
@@ -197,10 +218,13 @@ func Sidebar(l *List, others []Row, session string, focused bool, w, h int) []st
 	}
 	rows := l.Visible()
 	cur := l.clamp(len(rows))
-	for i, r := range rows {
-		if len(lines)+2 > h-3 {
-			break
-		}
+	body := h - 2 - 3 // header above, summary and help below
+	first, last := l.window(rows, cur, focused, body)
+	if first > 0 {
+		lines = append(lines, dim+Fit(fmt.Sprintf("  ↑ %d more", first), w)+reset)
+	}
+	for i := first; i < last; i++ {
+		r := rows[i]
 		st := StyleOf(r.State)
 		head := l.marker(r) + st.Color + st.Glyph + reset + " " + Fit(r.Name, w-3)
 		sub := l.marker(r) + dim + "  " + Fit(r.Window+"."+r.Index+" · "+filepath.Base(r.Path)+" · "+Age(r.Age), w-3) + reset
@@ -212,6 +236,9 @@ func Sidebar(l *List, others []Row, session string, focused bool, w, h int) []st
 			sub = hereBar + hereBg + dim + "  " + Fit(r.Window+"."+r.Index+" · "+filepath.Base(r.Path)+" · "+Age(r.Age), w-3) + reset
 		}
 		lines = append(lines, head, sub)
+	}
+	if last < len(rows) {
+		lines = append(lines, dim+Fit(fmt.Sprintf("  ↓ %d more", len(rows)-last), w)+reset)
 	}
 	if len(rows) == 0 {
 		lines = append(lines, dim+" no agents here"+reset)
@@ -263,4 +290,47 @@ func stateLabel(state string) string {
 		return "\x1b[1;31m" + Fit(state, 8) + reset
 	}
 	return Fit(state, 8)
+}
+
+// window picks the rows the sidebar shows (two lines each) in body lines,
+// scrolling only as far as needed to keep the focus row in view.
+func (l *List) window(rows []Row, cur int, focused bool, body int) (int, int) {
+	if len(rows)*2 <= body {
+		l.Top = 0
+		return 0, len(rows)
+	}
+	fit := (body - 2) / 2 // leave room for the ↑ and ↓ lines
+	if fit < 1 {
+		fit = 1
+	}
+	if l.Current != l.lastCurrent {
+		l.lastCurrent, l.scrolled = l.Current, false
+	}
+	focus := cur
+	if l.scrolled {
+		focus = -1
+	}
+	if !focused && !l.scrolled {
+		focus = -1
+		for i, r := range rows {
+			if r.ID == l.Current {
+				focus = i
+			}
+		}
+	}
+	if focus >= 0 {
+		if focus < l.Top {
+			l.Top = focus
+		}
+		if focus >= l.Top+fit {
+			l.Top = focus - fit + 1
+		}
+	}
+	if l.Top > len(rows)-fit {
+		l.Top = len(rows) - fit
+	}
+	if l.Top < 0 {
+		l.Top = 0
+	}
+	return l.Top, l.Top + fit
 }

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -194,5 +195,68 @@ func TestRunningPulsesOthersDoNot(t *testing.T) {
 	busy := Agents([]tmux.Pane{pane("%1", "a", "1", "running", "2.1.284", "✳ x", 0)}, now)
 	if Animated(idle) || !Animated(busy) {
 		t.Error("animation must run only while an agent is running")
+	}
+}
+
+func TestSidebarScrollsWithCursor(t *testing.T) {
+	var panes []tmux.Pane
+	for i := 0; i < 20; i++ {
+		panes = append(panes, pane(fmt.Sprintf("%%%d", i), "s", "1", "idle", "2.1.284", fmt.Sprintf("✳ agent %02d", i), 0))
+	}
+	l := &List{All: Agents(panes, now)}
+	const h = 16 // room for (16-5-2)/2 = 4 agents plus the ↑/↓ lines
+	view := strings.Join(Sidebar(l, nil, "s", true, 34, h), "\n")
+	if !strings.Contains(view, "agent 00") || strings.Contains(view, "agent 05") || !strings.Contains(view, "↓ 16 more") {
+		t.Fatalf("top of list:\n%s", view)
+	}
+	for i := 0; i < 10; i++ {
+		l.Handle(Key{Rune: 'j'})
+	}
+	view = strings.Join(Sidebar(l, nil, "s", true, 34, h), "\n")
+	if !strings.Contains(view, "agent 10") || !strings.Contains(view, "↑ 7 more") || strings.Contains(view, "agent 00") {
+		t.Fatalf("after scrolling to 10:\n%s", view)
+	}
+	for _, line := range Sidebar(l, nil, "s", true, 34, h) {
+		if Width(line) > 34 {
+			t.Errorf("line of %d cells", Width(line))
+		}
+	}
+	if n := len(Sidebar(l, nil, "s", true, 34, h)); n != h {
+		t.Errorf("%d lines for a %d-line pane", n, h)
+	}
+}
+
+func TestMouseWheelScrolls(t *testing.T) {
+	if got := decode([]byte("\x1b[<65;10;5M\x1b[<65;10;5M")); len(got) != 2 || got[0].Name != "wheeldown" {
+		t.Errorf("wheel down decoded to %v", got)
+	}
+	if got := decode([]byte("\x1b[<64;1;1M")); len(got) != 1 || got[0].Name != "wheelup" {
+		t.Errorf("wheel up decoded to %v", got)
+	}
+	if got := decode([]byte("\x1b[<0;3;4M")); len(got) != 0 {
+		t.Errorf("click decoded to %v", got)
+	}
+}
+
+// The wheel reaches an unfocused sidebar; its view must stay where the wheel
+// left it instead of snapping back to the current pane.
+func TestWheelScrollsUnfocusedSidebar(t *testing.T) {
+	var panes []tmux.Pane
+	for i := 0; i < 20; i++ {
+		panes = append(panes, pane(fmt.Sprintf("%%%d", i), "s", "1", "idle", "2.1.284", fmt.Sprintf("✳ agent %02d", i), 0))
+	}
+	l := &List{All: Agents(panes, now), Current: "%0"}
+	Sidebar(l, nil, "s", false, 34, 16)
+	for i := 0; i < 8; i++ {
+		l.Handle(Key{Name: "wheeldown"})
+	}
+	view := strings.Join(Sidebar(l, nil, "s", false, 34, 16), "\n")
+	if strings.Contains(view, "agent 00") || !strings.Contains(view, "agent 08") {
+		t.Fatalf("wheel did not scroll the unfocused sidebar:\n%s", view)
+	}
+	l.Current = "%1" // switching panes brings "you are here" back into view
+	view = strings.Join(Sidebar(l, nil, "s", false, 34, 16), "\n")
+	if !strings.Contains(view, "agent 01") {
+		t.Fatalf("pane switch did not bring the current pane back:\n%s", view)
 	}
 }

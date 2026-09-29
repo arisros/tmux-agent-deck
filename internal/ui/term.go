@@ -37,13 +37,14 @@ func OpenTerm() (*Term, error) {
 	if err != nil {
 		return nil, err
 	}
-	write("\x1b[?1049h\x1b[?25l")
+	// SGR mouse reporting, so tmux hands the view wheel events.
+	write("\x1b[?1049h\x1b[?25l\x1b[?1000h\x1b[?1006h")
 	return &Term{fd: fd, state: st}, nil
 }
 
 // Close restores the terminal.
 func (t *Term) Close() {
-	write("\x1b[?25h\x1b[?1049l")
+	write("\x1b[?1006l\x1b[?1000l\x1b[?25h\x1b[?1049l")
 	_ = term.Restore(t.fd, t.state)
 }
 
@@ -130,6 +131,9 @@ func decode(b []byte) []Key {
 	case "\x1b[C", "\x1bOC":
 		return []Key{{Name: "right"}}
 	}
+	if strings.HasPrefix(s, "\x1b[<") {
+		return mouse(s)
+	}
 	if strings.HasPrefix(s, "\x1b") {
 		return nil
 	}
@@ -172,4 +176,20 @@ func Watch(ctx context.Context, flags []string, channel string) <-chan struct{} 
 		}
 	}()
 	return ch
+}
+
+// mouse turns SGR mouse reports ("\x1b[<64;x;yM") into wheel keys. Clicks
+// are left to tmux, which focuses the pane.
+func mouse(s string) []Key {
+	var keys []Key
+	for _, ev := range strings.Split(s, "\x1b[<")[1:] {
+		button, _, _ := strings.Cut(ev, ";")
+		switch button {
+		case "64":
+			keys = append(keys, Key{Name: "wheelup"})
+		case "65":
+			keys = append(keys, Key{Name: "wheeldown"})
+		}
+	}
+	return keys
 }
