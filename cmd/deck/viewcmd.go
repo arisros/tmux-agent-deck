@@ -252,6 +252,7 @@ func sidebarRun(c tmux.Client, session string) error {
 		}
 		return mine
 	}
+	alone := false
 	load := func() {
 		panes, rows, err := agents(d, c)
 		if err != nil {
@@ -259,6 +260,7 @@ func sidebarRun(c tmux.Client, session string) error {
 		}
 		for _, p := range panes {
 			if p.ID == self {
+				alone = p.WindowPanes == 1
 				focused = p.PaneActive && p.WindowActive && p.Attached
 				name = p.Session
 			}
@@ -316,8 +318,48 @@ func sidebarRun(c tmux.Client, session string) error {
 		case <-tick.C:
 			load()
 		case <-winch:
+			// Closing the last other pane resizes the sidebar to the full
+			// window: the moment it is alone.
+			load()
+		}
+		if alone {
+			moved, err := leaveEmptyWindow(c, session, self)
+			if err != nil || !moved {
+				return err // returning closes the pane, and with it the last window
+			}
+			alone = false
+			load()
 		}
 	}
+}
+
+// leaveEmptyWindow runs when the sidebar is the only pane left in its window,
+// so the window would otherwise stay open showing just the deck. It moves to
+// the window tmux falls back to, which lets the empty one close; in the
+// session's last window it closes itself, and the window closes as usual.
+func leaveEmptyWindow(c tmux.Client, session, self string) (bool, error) {
+	out, err := c.Run("list-windows", "-t", session, "-F", "#{window_id} #{window_last_flag} #{window_active}")
+	if err != nil {
+		return false, err
+	}
+	target := ""
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		f := strings.Fields(line)
+		if len(f) != 3 || f[2] == "1" {
+			continue
+		}
+		if target == "" || f[1] == "1" {
+			target = f[0]
+		}
+	}
+	if target == "" {
+		return false, nil
+	}
+	if _, err := c.Run("join-pane", "-d", "-f", "-h", "-b", "-l", sidebarWidth(c), "-s", self, "-t", target); err != nil {
+		return false, err
+	}
+	_, err = c.Run("select-window", "-t", target)
+	return true, err
 }
 
 func runList(args []string) error {

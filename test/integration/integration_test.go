@@ -185,3 +185,37 @@ func TestAgentsWithoutHooksAreDiscovered(t *testing.T) {
 		t.Errorf("state = %q, want idle published for the tab and border", got)
 	}
 }
+
+// When every other pane in its window closes, the sidebar must not keep the
+// window open: it moves to the session's other window, or closes with the
+// session's last window.
+func TestSidebarLeavesAnEmptyWindow(t *testing.T) {
+	h := newHarness(t)
+	sess, w1 := h.opt("alpha", "session_id"), h.opt("alpha", "window_id")
+	w2 := h.tmux("new-window", "-d", "-t", "alpha", "-P", "-F", "#{window_id}", "sleep 100000")
+	h.tmux("select-window", "-t", w2)
+	work := h.opt(w2, "pane_id")
+
+	h.deck("", "sidebar", "toggle", "--session", sess, "--window", w2)
+	sb := h.tmux("show-options", "-qv", "-t", "alpha", "@deck_sidebar_pane")
+	h.eventually(func() bool { return strings.Contains(h.tmux("capture-pane", "-p", "-t", sb), "agents") }, "sidebar to draw")
+
+	h.tmux("kill-pane", "-t", work)
+	h.eventually(func() bool { return h.opt(sb, "window_id") == w1 }, "sidebar to move to the remaining window")
+	h.eventually(func() bool { return !strings.Contains(h.tmux("list-windows", "-t", "alpha", "-F", "#{window_id}"), w2) }, "empty window to close")
+
+	// Now the session's last window: closing its work pane closes everything.
+	last := h.opt(w1, "pane_id")
+	if last == sb {
+		t.Fatal("expected the work pane to be active")
+	}
+	h.tmux("new-session", "-d", "-s", "keepalive", "sleep 100000") // keep the server up
+	for _, p := range strings.Split(h.tmux("list-panes", "-t", w1, "-F", "#{pane_id}"), "\n") {
+		if p != sb {
+			h.tmux("kill-pane", "-t", p)
+		}
+	}
+	h.eventually(func() bool {
+		return !strings.Contains(h.tmux("list-sessions", "-F", "#{session_name}"), "alpha")
+	}, "the sidebar to close with the session's last window")
+}

@@ -121,13 +121,14 @@ type Pane struct {
 	State, SID, Sidebar                             string
 	Since                                           int64
 	PaneActive, WindowActive, Attached              bool
+	WindowPanes                                     int
 }
 
 var paneFields = []string{
 	"#{pane_id}", "#{session_name}", "#{session_id}", "#{window_index}", "#{window_id}", "#{pane_index}",
 	"#{window_name}", "#{pane_current_command}", "#{pane_title}", "#{pane_current_path}",
 	"#{@deck_state}", "#{@deck_sid}", "#{@deck_sidebar}", "#{@deck_since}",
-	"#{pane_active}", "#{window_active}", "#{session_attached}",
+	"#{pane_active}", "#{window_active}", "#{session_attached}", "#{window_panes}",
 }
 
 // sep must survive tmux's output escaping: tmux prints control characters
@@ -153,11 +154,13 @@ func ParsePanes(out string) []Pane {
 		}
 		since, _ := strconv.ParseInt(f[13], 10, 64)
 		attached, _ := strconv.Atoi(f[16])
+		windowPanes, _ := strconv.Atoi(f[17])
 		panes = append(panes, Pane{
 			ID: f[0], Session: f[1], SessionID: f[2], Window: f[3], WindowID: f[4], Index: f[5],
 			WindowName: f[6], Command: f[7], Title: f[8], Path: f[9],
 			State: f[10], SID: f[11], Sidebar: f[12], Since: since,
 			PaneActive: f[14] == "1", WindowActive: f[15] == "1", Attached: attached > 0,
+			WindowPanes: windowPanes,
 		})
 	}
 	return panes
