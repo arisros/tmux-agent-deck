@@ -2,9 +2,12 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
+	"time"
 
 	"golang.org/x/term"
 )
@@ -19,6 +22,8 @@ type Key struct {
 type Term struct {
 	fd    int
 	state *term.State
+	mu    sync.Mutex
+	input []string
 }
 
 // write sends a whole frame in one call, so the terminal never shows half of
@@ -66,23 +71,51 @@ func (t *Term) Draw(lines []string) {
 	write(b.String())
 }
 
-// Keys decodes keypresses from stdin until it closes.
+// startGrace drops a lone Esc arriving right after the view opens. The
+// terminal can deliver the tail of the key that opened it, or a focus
+// report, as a bare ESC byte, which would otherwise close the view at once.
+const startGrace = 400 * time.Millisecond
+
+// Keys decodes keypresses from stdin until it closes. Raw input is kept in
+// Trace so a view can report what made it close.
 func (t *Term) Keys() <-chan Key {
 	ch := make(chan Key)
+	start := time.Now()
 	go func() {
 		defer close(ch)
 		buf := make([]byte, 64)
 		for {
 			n, err := os.Stdin.Read(buf)
 			if err != nil {
+				t.trace("read error: " + err.Error())
 				return
 			}
+			t.trace(fmt.Sprintf("%q", buf[:n]))
 			for _, k := range decode(buf[:n]) {
+				if k.Name == "esc" && time.Since(start) < startGrace {
+					continue
+				}
 				ch <- k
 			}
 		}
 	}()
 	return ch
+}
+
+func (t *Term) trace(s string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.input = append(t.input, s)
+	if len(t.input) > 8 {
+		t.input = t.input[1:]
+	}
+}
+
+// Trace is the most recent raw input, oldest first.
+func (t *Term) Trace() []string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return append([]string(nil), t.input...)
 }
 
 func decode(b []byte) []Key {

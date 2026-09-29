@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -86,10 +87,12 @@ func runPopup(args []string) error {
 		select {
 		case k, ok := <-keys:
 			if !ok {
+				logView("popup: input closed", t.Trace())
 				return nil
 			}
 			switch l.Handle(k) {
 			case ui.Quit:
+				logView(fmt.Sprintf("popup: quit on %+v", k), t.Trace())
 				return nil
 			case ui.Jump:
 				if r, ok := l.Selected(); ok {
@@ -353,3 +356,23 @@ func runList(args []string) error {
 
 // tmuxQuote single-quotes s for a tmux command string passed to a shell.
 func tmuxQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
+
+// logView appends why a view closed, with the raw input that led there, to a
+// small log next to the session records. A popup that closes on its own gives
+// the user nothing to read; this does.
+func logView(reason string, input []string) {
+	dir := filepath.Dir(store.DefaultDir())
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return
+	}
+	name := filepath.Join(dir, "views.log")
+	if fi, err := os.Stat(name); err == nil && fi.Size() > 64<<10 {
+		_ = os.Remove(name)
+	}
+	f, err := os.OpenFile(name, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	fmt.Fprintf(f, "%s %s input=%s\n", time.Now().Format(time.RFC3339), reason, strings.Join(input, " "))
+}
