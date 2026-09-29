@@ -22,6 +22,9 @@ import (
 func newDeck() (*deck.Deck, tmux.Client, error) {
 	c := tmux.FromEnv()
 	d, err := deck.New(c, store.DefaultDir())
+	if d != nil {
+		d.Log = func(s string) { logView(s, nil) }
+	}
 	return d, c, err
 }
 

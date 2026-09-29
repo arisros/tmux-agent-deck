@@ -277,3 +277,17 @@ func TestSidebarRestoresASqueezedWidth(t *testing.T) {
 		t.Errorf("a deliberate resize to 40 was undone: %s", got)
 	}
 }
+
+// Opening a sidebar must not take focus from the pane the user works in:
+// losing focus runs the screen check on that pane.
+func TestSidebarDoesNotStealFocus(t *testing.T) {
+	h := newHarness(t)
+	sess, w1 := h.opt("alpha", "session_id"), h.opt("alpha", "window_id")
+	before := h.opt(w1, "pane_id")
+	h.deck("", "sidebar", "toggle", "--session", sess, "--window", w1)
+	sb := h.tmux("show-options", "-qv", "-t", "alpha", "@deck_sidebar_pane")
+	h.eventually(func() bool { return h.opt(sb, "pane_title") == "agents" }, "sidebar to title itself")
+	if got := h.opt(w1, "pane_id"); got != before {
+		t.Errorf("active pane moved from %s to %s", before, got)
+	}
+}

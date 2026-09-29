@@ -30,6 +30,10 @@ type Term struct {
 // one. A failed write only costs a frame; the next redraw repeats everything.
 func write(s string) { _, _ = os.Stdout.WriteString(s) }
 
+// SetTitle names the pane through its terminal title, which tmux shows as
+// pane_title; unlike select-pane -T, it does not move focus.
+func (t *Term) SetTitle(s string) { write("\x1b]2;" + s + "\x07") }
+
 // OpenTerm switches stdin to raw mode and takes over the screen.
 func OpenTerm() (*Term, error) {
 	fd := int(os.Stdin.Fd())

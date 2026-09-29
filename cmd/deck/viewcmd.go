@@ -255,7 +255,6 @@ func sidebarToggle(c tmux.Client, session, window string) error {
 	p := strings.TrimSpace(out)
 	return c.Batch([][]string{
 		{"set-option", "-p", "-t", p, "@deck_sidebar", "1"},
-		{"select-pane", "-t", p, "-T", "agents"},
 		{"set-option", "-t", session, "@deck_sidebar_pane", p},
 		{"set-option", "-t", session, "@deck_sidebar_window", window},
 	})
@@ -282,6 +281,7 @@ func sidebarRun(c tmux.Client, session string) (err error) {
 	if err != nil {
 		return err
 	}
+	d.Log = func(s string) { logView(s, nil) }
 	self := os.Getenv("TMUX_PANE")
 	l := &ui.List{}
 	var others []ui.Row
@@ -333,6 +333,7 @@ func sidebarRun(c tmux.Client, session string) (err error) {
 		return err
 	}
 	defer t.Close()
+	t.SetTitle("agents")
 	defer func() {
 		_ = c.Batch([][]string{
 			{"set-option", "-u", "-t", session, "@deck_sidebar_pane"},
@@ -490,7 +491,11 @@ func logView(reason string, input []string) {
 		return
 	}
 	defer f.Close()
-	fmt.Fprintf(f, "%s %s input=%s\n", time.Now().Format(time.RFC3339), reason, strings.Join(input, " "))
+	line := time.Now().Format(time.RFC3339) + " " + reason
+	if input != nil {
+		line += " input=" + strings.Join(input, " ")
+	}
+	fmt.Fprintln(f, line)
 }
 
 // logFailure records a view that ends in an error or a panic. Inside a tmux

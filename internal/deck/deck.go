@@ -4,6 +4,7 @@
 package deck
 
 import (
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -29,6 +30,9 @@ type Deck struct {
 	Dir     string
 	Machine *machine.Machine
 	Now     func() time.Time
+	// Log, when set, records every state change a screen check makes: those
+	// are inferences, and a wrong one should leave a trace.
+	Log func(string)
 }
 
 // New returns a Deck for the given tmux server and state directory.
@@ -144,7 +148,32 @@ func (d *Deck) Reconcile(pane, sid, state string) error {
 	if kind == "" {
 		return nil
 	}
-	return d.send(pane, sid, machine.Screen{At: d.Now().Unix(), Kind: kind})
+	from := state
+	err = d.send(pane, sid, machine.Screen{At: d.Now().Unix(), Kind: kind})
+	if to, _ := d.Tmux.PaneOption(pane, "@deck_state"); to != from && d.Log != nil {
+		d.Log(fmt.Sprintf("reconcile %s: %s -> %s (screen %s, last line %q)", pane, from, to, kind, lastLine(screen)))
+	}
+	return err
+}
+
+func lastLine(screen string) string {
+	lines := strings.Split(strings.TrimRight(screen, "\n "), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if t := strings.TrimSpace(lines[i]); strings.HasPrefix(t, "❯") && i > 0 {
+			return lastTranscriptLine(reverse(lines[:i]))
+		}
+	}
+	return ""
+}
+
+func reverse(in []string) []string {
+	out := make([]string, 0, len(in))
+	for i := len(in) - 1; i >= 0; i-- {
+		if strings.TrimSpace(in[i]) != "" {
+			out = append(out, in[i])
+		}
+	}
+	return out
 }
 
 // ReconcileStale reconciles every agent that has been running or waiting for
@@ -297,6 +326,12 @@ func Classify(screen string) string {
 	case has("esc to interrupt"), has("queued messages"), strings.Contains(footer, "esc to"), busyBelow:
 		return machine.ScreenWorking
 	}
+	for _, l := range tail {
+		// The spinner above the input box: "✽ Mustering… (4m 8s · ↓ 13.3k tokens)".
+		if spinner.MatchString(l) {
+			return machine.ScreenWorking
+		}
+	}
 	box := -1
 	for i, l := range tail {
 		if strings.HasPrefix(strings.TrimSpace(l), "❯") {
@@ -312,6 +347,9 @@ func Classify(screen string) string {
 	}
 	return machine.ScreenNoDialog
 }
+
+// spinner matches Claude's working line, "✽ Mustering… (4m 8s · ↓ 13.3k tokens)".
+var spinner = regexp.MustCompile(`^\s*\S+ \S+… \(\d`)
 
 // turnDone matches Claude's end-of-turn line, "✻ Worked for 2s · done 2:09 AM".
 var turnDone = regexp.MustCompile(`· done \d{1,2}:\d{2}`)

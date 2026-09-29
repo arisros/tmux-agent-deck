@@ -292,7 +292,7 @@ func TestUsageColumnsFit(t *testing.T) {
 	side := strings.Join(Sidebar(l, nil, "a", false, 34, 14), "\n")
 	plain := regexp.MustCompile(`\x1b\[[0-9;]*m`).ReplaceAllString(side, "")
 	if !strings.Contains(plain, "5h ▰▰▰▰▰▰▰▱  85% ↻") || !strings.Contains(plain, "ctx ▰▰▱▱▱ 42%") ||
-		!strings.Contains(plain, "win 1.0") || !strings.Contains(plain, "other sessions: none") {
+		!strings.Contains(plain, "  1.0 · ctx") || !strings.Contains(plain, "other sessions: none") {
 		t.Errorf("sidebar lacks plan or context:\n%s", side)
 	}
 }

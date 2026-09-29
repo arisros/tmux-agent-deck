@@ -272,6 +272,16 @@ const (
   Opus 5.5 (1M context) · ctx 59% · 5h 25% · 7d 5%
   ⏵⏵ auto mode on (shift+tab to cycle) · ← 5 agents
 `
+	// This project's own session mid-turn: the spinner above the input box
+	// is the one sign of work on the screen.
+	screenSpinner = `✽ Mustering… (4m 8s · ↓ 13.3k tokens)
+                                                           ✔ Update installed · Restart to update
+──────────────────────────────────────────────────────────── tmux-agent-deck-plan ─
+❯ 
+───────────────────────────────────────────────────────────────────────────────────
+  Opus 5.5 (1M context) · ctx 64% · 5h 27% · 7d 5%
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← 5 agents
+`
 	// Lab captures: Esc during a running tool, and Esc at a permission prompt.
 	screenInterrupted = `  Ran 1 shell command
   ⎿  Interrupted · What should Claude do instead?
@@ -306,6 +316,7 @@ func TestClassify(t *testing.T) {
 		screenQuestion:        machine.ScreenDialog,
 		// No end marker: never idle, whatever the footer says.
 		screenToolRunningAuto: machine.ScreenNoDialog,
+		screenSpinner:         machine.ScreenWorking,
 		screenTypingWhileBusy: machine.ScreenNoDialog,
 		screenNarrowIdle:      machine.ScreenNoDialog,
 		screenNarrowerWorking: machine.ScreenNoDialog,
