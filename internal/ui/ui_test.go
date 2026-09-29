@@ -293,3 +293,24 @@ func TestUsageColumnsFit(t *testing.T) {
 		t.Errorf("sidebar lacks plan or context:\n%s", side)
 	}
 }
+
+func TestAttachByPaneWhenNoSession(t *testing.T) {
+	hooked := pane("%2", "a", "2", "running", "2.1.284", "✳ hooked", 0)
+	hooked.SID = "s2"
+	rows := Attach(Agents([]tmux.Pane{pane("%1", "a", "1", "idle", "2.1.284", "✳ discovered", 0), hooked}, now),
+		map[string]usage.Session{
+			"old": {Pane: "%1", CostUSD: 1, UpdatedAtUnix: 10},
+			"new": {Pane: "%1", CostUSD: 2, UpdatedAtUnix: 20},
+			"s2":  {CostUSD: 3},
+		})
+	byID := map[string]Row{}
+	for _, r := range rows {
+		byID[r.ID] = r
+	}
+	if u := byID["%1"].Usage; u == nil || u.CostUSD != 2 {
+		t.Errorf("discovered row usage = %+v, want the newest report from its pane", u)
+	}
+	if u := byID["%2"].Usage; u == nil || u.CostUSD != 3 {
+		t.Errorf("hooked row usage = %+v", u)
+	}
+}

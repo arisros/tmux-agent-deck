@@ -4,6 +4,7 @@
 package deck
 
 import (
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -173,7 +174,7 @@ func (d *Deck) Discover(panes []tmux.Pane) int {
 		if err != nil {
 			continue
 		}
-		state := machine.Idle
+		state := machine.Idle // a fresh or quiet session has no end marker yet
 		switch Classify(screen) {
 		case machine.ScreenWorking:
 			state = machine.Running
@@ -250,18 +251,18 @@ func clear(pane string) [][]string {
 	}
 }
 
-// Classify reads Claude Code's footer. It answers "" when unsure, and callers
-// then leave the state alone: a stale state beats a wrong one.
+// Classify reads a Claude Code screen. It only concludes from explicit
+// markers; "" means no Claude screen, and callers then change nothing.
 //
-// Idle needs an idle footer that is complete and an empty input line. While
-// the user types into a busy session, Claude hides "esc to interrupt"; in a
-// narrow pane it cuts the footer off with "…", possibly before "esc to";
-// and a panel of background agents can sit under the footer of an idle
-// prompt while work goes on.
+// The footer alone proves nothing: Claude drops "esc to interrupt" while a
+// tool runs in auto mode, while the user types, and when a narrow pane cuts
+// the line short. Idle therefore needs the transcript's own end marker right
+// above the input box: "Interrupted" (Esc, or a denied permission) or
+// "· done 4:12" (a finished turn).
 func Classify(screen string) string {
 	lines := strings.Split(strings.TrimRight(screen, "\n "), "\n")
 	var tail []string
-	for i := len(lines) - 1; i >= 0 && len(tail) < 25; i-- {
+	for i := len(lines) - 1; i >= 0 && len(tail) < 30; i-- {
 		if strings.TrimSpace(lines[i]) != "" {
 			tail = append(tail, lines[i])
 		}
@@ -295,10 +296,36 @@ func Classify(screen string) string {
 		return machine.ScreenDialog
 	case has("esc to interrupt"), has("queued messages"), strings.Contains(footer, "esc to"), busyBelow:
 		return machine.ScreenWorking
-	case footer == "", strings.HasSuffix(strings.TrimSpace(footer), "…"):
+	}
+	box := -1
+	for i, l := range tail {
+		if strings.HasPrefix(strings.TrimSpace(l), "❯") {
+			box = i
+			break
+		}
+	}
+	if box < 0 {
 		return ""
-	case emptyInput(tail):
+	}
+	if last := lastTranscriptLine(tail[box+1:]); strings.Contains(last, "Interrupted") || turnDone.MatchString(last) {
 		return machine.ScreenIdle
+	}
+	return machine.ScreenNoDialog
+}
+
+// turnDone matches Claude's end-of-turn line, "✻ Worked for 2s · done 2:09 AM".
+var turnDone = regexp.MustCompile(`· done \d{1,2}:\d{2}`)
+
+// lastTranscriptLine is the first line above the input box that belongs to
+// the transcript: separators and right-aligned notices ("✔ Update
+// installed") are skipped.
+func lastTranscriptLine(above []string) string {
+	for _, l := range above {
+		t := strings.TrimSpace(l)
+		if strings.Count(t, "─") >= 10 || len(l)-len(strings.TrimLeft(l, " ")) >= 20 {
+			continue
+		}
+		return t
 	}
 	return ""
 }
@@ -306,18 +333,4 @@ func Classify(screen string) string {
 func idleFooter(line string) bool {
 	return strings.Contains(line, "for shortcuts") || strings.Contains(line, "shift+tab to cycle") ||
 		strings.Contains(line, "mode on")
-}
-
-// emptyInput reports whether Claude's prompt line holds no typed text; the
-// grey suggestion Claude shows in an empty prompt counts as empty.
-func emptyInput(tail []string) bool {
-	for _, l := range tail {
-		t := strings.TrimSpace(l)
-		if !strings.HasPrefix(t, "❯") {
-			continue
-		}
-		rest := strings.TrimSpace(strings.TrimPrefix(t, "❯"))
-		return rest == "" || strings.HasPrefix(rest, "Try \"")
-	}
-	return false
 }

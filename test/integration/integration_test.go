@@ -71,9 +71,9 @@ func TestDeadAgentHidden(t *testing.T) {
 
 func TestReconcileFromScreen(t *testing.T) {
 	h := newHarness(t)
-	// An agent whose screen shows Claude's idle footer, as after Esc.
+	// An agent whose screen ends in Claude's "Interrupted" marker, as after Esc.
 	idle := h.tmux("split-window", "-d", "-t", "alpha", "-P", "-F", "#{pane_id}",
-		`printf '❯ \n  ⏸ manual mode on · ? for shortcuts\n'; exec `+h.fake)
+		`printf '  ⎿  Interrupted · What should Claude do instead?\n──────────────────\n❯ \n──────────────────\n  ⏸ manual mode on · ? for shortcuts\n'; exec `+h.fake)
 	h.eventually(func() bool { return h.opt(idle, "pane_current_command") == "2.1.999" }, "fake claude")
 	h.hook(idle, "UserPromptSubmit", "")
 	h.hook(idle, "PermissionRequest", "")

@@ -30,12 +30,12 @@ func TestRecordAndLoad(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := Record(dir, in, now); err != nil {
+	if err := Record(dir, in, "%7", now); err != nil {
 		t.Fatal(err)
 	}
 	sessions, limits := Load(dir)
 	s, ok := sessions["abc-123"]
-	if !ok || s.Model != "Opus 5.5" || s.CostUSD != 1.2345 || s.InputTokens != 120000 || *s.ContextUsed != 42.4 {
+	if !ok || s.Pane != "%7" || s.Model != "Opus 5.5" || s.CostUSD != 1.2345 || s.InputTokens != 120000 || *s.ContextUsed != 42.4 {
 		t.Fatalf("session = %+v", s)
 	}
 	if limits == nil || limits.FiveHour.UsedPercentage != 31 || limits.FiveHour.ResetsAt.Unix() != 1790712000 {
@@ -65,9 +65,9 @@ func TestResetTimeInMilliseconds(t *testing.T) {
 func TestInputWithoutLimitsKeepsTheLastKnown(t *testing.T) {
 	dir := t.TempDir()
 	full, _ := Parse(strings.NewReader(input))
-	_ = Record(dir, full, now)
+	_ = Record(dir, full, "%7", now)
 	bare, _ := Parse(strings.NewReader(`{"session_id":"other","model":{"display_name":"Sonnet 5.5"}}`))
-	_ = Record(dir, bare, now.Add(time.Minute))
+	_ = Record(dir, bare, "", now.Add(time.Minute))
 	sessions, limits := Load(dir)
 	if len(sessions) != 2 || limits == nil || limits.FiveHour.UsedPercentage != 31 {
 		t.Errorf("sessions %d, limits %+v", len(sessions), limits)
@@ -77,7 +77,7 @@ func TestInputWithoutLimitsKeepsTheLastKnown(t *testing.T) {
 func TestRejectsUnsafeSessionID(t *testing.T) {
 	dir := t.TempDir()
 	in, _ := Parse(strings.NewReader(`{"session_id":"../../evil","model":{"display_name":"x"}}`))
-	_ = Record(dir, in, now)
+	_ = Record(dir, in, "%7", now)
 	if files, _ := filepath.Glob(filepath.Join(dir, "*")); len(files) != 0 {
 		t.Errorf("wrote %v", files)
 	}

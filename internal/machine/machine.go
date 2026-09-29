@@ -91,6 +91,9 @@ const (
 	ScreenIdle    = "idle"
 	ScreenWorking = "working"
 	ScreenDialog  = "dialog"
+	// ScreenNoDialog is a Claude screen with no dialog and no stronger sign:
+	// a pending prompt has been answered, which is all it proves.
+	ScreenNoDialog = "nodialog"
 )
 
 // EventName implements Event.
@@ -218,7 +221,8 @@ func New() (*Machine, error) {
 				"ToolEnd": {when(Running, "main agent", mainAgent)},
 				"Prompt":  {to(Running)},
 				"Stop":    stopTransitions(),
-				"Screen":  {when(Idle, "idle", screen(ScreenIdle)), when(Running, "working", screen(ScreenWorking))},
+				"Screen": {when(Idle, "idle", screen(ScreenIdle)), when(Running, "working", screen(ScreenWorking)),
+					when(Running, "answered", screen(ScreenNoDialog))},
 			}},
 			Done: {On: map[string][]tr{
 				"Begin":      {to(Idle)},

@@ -25,10 +25,23 @@ type Row struct {
 	Usage *usage.Session // nil until Claude has run the deck's statusLine for it
 }
 
-// Attach joins each row to the usage its Claude session reported.
+// Attach joins each row to the usage its Claude session reported: by session
+// id when the deck has one, otherwise by the pane Claude reported from, most
+// recent report first (a pane can host several sessions over time).
 func Attach(rows []Row, sessions map[string]usage.Session) []Row {
+	byPane := map[string]usage.Session{}
+	for _, s := range sessions {
+		if s.Pane == "" {
+			continue
+		}
+		if prev, ok := byPane[s.Pane]; !ok || s.UpdatedAtUnix > prev.UpdatedAtUnix {
+			byPane[s.Pane] = s
+		}
+	}
 	for i := range rows {
-		if s, ok := sessions[rows[i].SID]; ok {
+		if s, ok := sessions[rows[i].SID]; ok && rows[i].SID != "" {
+			rows[i].Usage = &s
+		} else if s, ok := byPane[rows[i].ID]; ok {
 			rows[i].Usage = &s
 		}
 	}

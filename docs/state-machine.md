@@ -37,6 +37,7 @@ stateDiagram-v2
     s_waiting --> s_idle : Begin / since
     s_waiting --> s_idle : Screen [idle] / since
     s_waiting --> s_running : Prompt / since
+    s_waiting --> s_running : Screen [answered] / since
     s_waiting --> s_running : Screen [working] / since
     s_waiting --> s_running : ToolEnd [main agent] / since
     s_waiting --> s_waiting : Stop [background] / bg

@@ -80,6 +80,9 @@ func (r ResetTime) MarshalJSON() ([]byte, error) {
 
 // Session is what the deck keeps per Claude session.
 type Session struct {
+	// Pane is the tmux pane Claude runs in, for sessions the deck has no
+	// hook record for yet (agents discovered from their screen).
+	Pane          string   `json:"pane,omitempty"`
 	Model         string   `json:"model"`
 	CostUSD       float64  `json:"cost_usd"`
 	InputTokens   int64    `json:"input_tokens"`
@@ -107,12 +110,13 @@ func Parse(r io.Reader) (Input, error) {
 var validID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 
 // Record saves the session's usage and, when present, the plan's limits.
-func Record(dir string, in Input, now time.Time) error {
+func Record(dir string, in Input, pane string, now time.Time) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
 	if validID.MatchString(in.SessionID) {
 		s := Session{
+			Pane:          pane,
 			Model:         in.Model.DisplayName,
 			CostUSD:       in.Cost.TotalCostUSD,
 			InputTokens:   in.ContextWindow.TotalInputTokens,

@@ -99,6 +99,6 @@ func runStatusLine(stdin io.Reader) {
 		fmt.Println()
 		return
 	}
-	_ = usage.Record(usage.DefaultDir(store.DefaultDir()), in, time.Now())
+	_ = usage.Record(usage.DefaultDir(store.DefaultDir()), in, os.Getenv("TMUX_PANE"), time.Now())
 	fmt.Println(usage.Line(in))
 }

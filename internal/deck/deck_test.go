@@ -261,6 +261,31 @@ const (
   ⏺ main
   ◯ general-purpose  Adding b… 4m 29s · ↓ 95.1k tokens
 `
+	// This project's own session while a Bash tool ran in auto mode: no
+	// "esc to interrupt" anywhere, which once read as idle.
+	screenToolRunningAuto = `● Bash(go test ./...)
+  ⎿  Running…
+                                           ✔ Update installed · Restart to update
+──────────────────────────────────────────────────── tmux-agent-deck-plan ─
+❯ 
+───────────────────────────────────────────────────────────────────────────
+  Opus 5.5 (1M context) · ctx 59% · 5h 25% · 7d 5%
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← 5 agents
+`
+	// Lab captures: Esc during a running tool, and Esc at a permission prompt.
+	screenInterrupted = `  Ran 1 shell command
+  ⎿  Interrupted · What should Claude do instead?
+────────────────────────────────
+❯ 
+────────────────────────────────
+  ⏸ manual mode on · ? for shortcuts · ← 4 agents
+`
+	screenDeniedAtPrompt = `✻ Sautéed for 2s · done 2:08 AM
+────────────────────────────────
+❯ 
+────────────────────────────────
+  ⏸ manual mode on · ? for shortcuts · ← 4 agents
+`
 	screenQuestion = `❯ 1. Blue
   2. Red
   6. Chat about this
@@ -270,19 +295,21 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
 
 func TestClassify(t *testing.T) {
 	cases := map[string]string{
-		screenIdle:     machine.ScreenIdle,
-		screenIdleAuto: machine.ScreenIdle,
-		screenWorking:  machine.ScreenWorking,
-		screenDialog:   machine.ScreenDialog,
-		screenQuestion: machine.ScreenDialog,
-		// Typing into a busy agent must not read as idle.
-		screenTypingWhileBusy: "",
+		screenIdle:            machine.ScreenIdle,
+		screenInterrupted:     machine.ScreenIdle,
+		screenDeniedAtPrompt:  machine.ScreenIdle,
+		screenWorking:         machine.ScreenWorking,
 		screenQueued:          machine.ScreenWorking,
-		// Narrow panes: never read a cut-off footer as idle.
-		screenNarrowIdle:      "",
 		screenNarrowWorking:   machine.ScreenWorking,
-		screenNarrowerWorking: "",
 		screenBackgroundAgent: machine.ScreenWorking,
+		screenDialog:          machine.ScreenDialog,
+		screenQuestion:        machine.ScreenDialog,
+		// No end marker: never idle, whatever the footer says.
+		screenToolRunningAuto: machine.ScreenNoDialog,
+		screenTypingWhileBusy: machine.ScreenNoDialog,
+		screenNarrowIdle:      machine.ScreenNoDialog,
+		screenNarrowerWorking: machine.ScreenNoDialog,
+		screenIdleAuto:        machine.ScreenNoDialog,
 		"":                    "",
 		"$ ls\nfoo\n":         "",
 	}
@@ -395,5 +422,35 @@ func TestDiscoverUnknownClaudePanes(t *testing.T) {
 	}
 	if n := d.Discover([]tmux.Pane{{ID: "%1", Command: "2.1.284", State: "running"}}); n != 0 {
 		t.Errorf("rediscovered a known pane")
+	}
+}
+
+// A permission was approved and its tool is still running: no hook arrives
+// until the tool ends, so without the screen the agent would stay red.
+func TestApprovedPromptLeavesWaitingBeforeTheToolEnds(t *testing.T) {
+	f := newFake()
+	d := newDeck(t, f)
+	send(t, d, "%1", ev("UserPromptSubmit", ""))
+	send(t, d, "%1", ev("PermissionRequest", ""))
+	f.screen = screenToolRunningAuto
+	if err := d.Reconcile("%1", "s1", machine.Waiting); err != nil {
+		t.Fatal(err)
+	}
+	if f.state("%1") != machine.Running {
+		t.Errorf("state = %q, want running", f.state("%1"))
+	}
+}
+
+// The bug this redesign fixes: a running tool must never read as idle.
+func TestRunningToolNeverReadsIdle(t *testing.T) {
+	f := newFake()
+	d := newDeck(t, f)
+	send(t, d, "%1", ev("UserPromptSubmit", ""))
+	f.screen = screenToolRunningAuto
+	if err := d.Reconcile("%1", "s1", machine.Running); err != nil {
+		t.Fatal(err)
+	}
+	if f.state("%1") != machine.Running {
+		t.Errorf("state = %q, want running", f.state("%1"))
 	}
 }
