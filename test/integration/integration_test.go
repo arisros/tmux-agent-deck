@@ -224,3 +224,40 @@ func TestSidebarLeavesAnEmptyWindow(t *testing.T) {
 		return !strings.Contains(h.tmux("list-sessions", "-F", "#{session_name}"), "alpha")
 	}, "the sidebar to close with the session's last window")
 }
+
+// Claude runs the deck's statusLine; its usage and plan limits reach the views.
+func TestStatusLineFeedsTheViews(t *testing.T) {
+	h := newHarness(t)
+	a := h.agent("alpha")
+	h.hook(a, "UserPromptSubmit", "")
+	sid := "sess-" + strings.TrimPrefix(a, "%")
+	line := h.deck(`{"session_id":"`+sid+`","model":{"display_name":"Opus 5.5"},
+		"cost":{"total_cost_usd":1.25},
+		"context_window":{"total_input_tokens":120000,"total_output_tokens":8000,"used_percentage":42},
+		"rate_limits":{"five_hour":{"used_percentage":31,"resets_at":4102444800},"seven_day":{"used_percentage":12,"resets_at":4102444800}}}`,
+		"statusline")
+	if strings.TrimSpace(line) != "Opus 5.5 · ctx 42% · 5h 31% · 7d 12%" {
+		t.Errorf("status line = %q", line)
+	}
+	if out := h.deck("", "list"); !strings.Contains(out, "plan 5h 31%   7d 12%") {
+		t.Errorf("list lacks the plan:\n%s", out)
+	}
+	h.tmux("set-environment", "-g", "DECK_TMUX_SOCKET", h.socket)
+	popup := h.tmux("new-window", "-d", "-P", "-F", "#{pane_id}", h.bin+" popup")
+	var screen string
+	for i := 0; i < 100; i++ {
+		screen = h.tmux("capture-pane", "-p", "-t", popup)
+		if strings.Contains(screen, "$1.25") {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	for _, want := range []string{"plan", "31%", "42%", "128.0k", "$1.25"} {
+		if !strings.Contains(screen, want) {
+			t.Errorf("popup lacks %q:\n%s", want, screen)
+		}
+	}
+	if out := h.deck("not json", "statusline"); strings.TrimSpace(out) != "" {
+		t.Errorf("garbage input printed %q", out)
+	}
+}

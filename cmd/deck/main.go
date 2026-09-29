@@ -10,7 +10,7 @@ import (
 
 var version = "dev"
 
-const usage = `usage: deck <command> [flags]
+const usageText = `usage: deck <command> [flags]
 
 hooks (called by Claude Code and tmux):
   hook [--record]                      apply a hook event read from stdin (--record: only log it, redacted)
@@ -29,13 +29,14 @@ setup:
   uninstall --claude [--apply]         remove every deck hook from Claude settings
   doctor                               check the installation
   describe                             print the state machine as Mermaid
+  statusline                           Claude statusLine: record usage and plan limits, print a status line
   tick                                 print the tab pulse frame (used by @deck-tab-pulse)
   version
 `
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprint(os.Stderr, usage)
+		fmt.Fprint(os.Stderr, usageText)
 		os.Exit(2)
 	}
 	var err error
@@ -62,6 +63,8 @@ func main() {
 		err = runDoctor(args)
 	case "describe":
 		err = runDescribe()
+	case "statusline":
+		runStatusLine(os.Stdin)
 	case "tick":
 		// The tab pulse: tmux re-runs this every second while an agent runs.
 		if time.Now().Unix()%2 == 0 {
@@ -72,7 +75,7 @@ func main() {
 	case "version":
 		fmt.Println(version)
 	default:
-		fmt.Fprint(os.Stderr, usage)
+		fmt.Fprint(os.Stderr, usageText)
 		os.Exit(2)
 	}
 	if err != nil {

@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
+
+	"github.com/arisros/tmux-agent-deck/internal/usage"
 )
 
 const (
@@ -42,6 +45,10 @@ type List struct {
 	// pane switch take over again.
 	scrolled    bool
 	lastCurrent string
+	// Limits is the plan's usage, when Claude has reported it.
+	Limits *usage.Limits
+	// Now is the clock the views render ages and resets against.
+	Now time.Time
 }
 
 // Visible is All narrowed by the filter.
@@ -170,16 +177,18 @@ func (l *List) Handle(k Key) Outcome {
 // Popup renders the all-sessions list.
 func Popup(l *List, w, h int) []string {
 	rows := l.Visible()
-	lines := []string{
-		Fit(" "+bold+"agents"+reset+"   "+Summary(Counts(l.All), true), w),
-		dim + strings.Repeat("─", w) + reset,
+	lines := []string{Fit(" "+bold+"agents"+reset+"   "+Summary(Counts(l.All), true), w)}
+	if plan := Plan(l.Limits, l.now(), true); plan != "" {
+		lines = append(lines, Fit(" "+bold+"plan"+reset+"     "+plan, w))
 	}
-	// " ◆ " + state + age + target + name + folder, one space between columns.
-	nameW := w - 3 - (8 + 1) - (4 + 1) - (20 + 1) - 1 - 18
+	lines = append(lines, dim+strings.Repeat("─", w)+reset)
+	// " ◆ " + state + age + target + name + ctx + tokens + cost + folder,
+	// one space between columns.
+	nameW := w - 3 - (8 + 1) - (4 + 1) - (20 + 1) - 1 - (5 + 1) - (7 + 1) - (7 + 1) - 14
 	if nameW < 8 {
 		nameW = 8
 	}
-	body := h - 3
+	body := h - len(lines) - 1
 	start := 0
 	if cur := l.clamp(len(rows)); cur >= body {
 		start = cur - body + 1
@@ -187,10 +196,11 @@ func Popup(l *List, w, h int) []string {
 	for i := start; i < len(rows) && i < start+body; i++ {
 		r := rows[i]
 		st := StyleOf(r.State)
-		line := fmt.Sprintf("%s%s%s%s %s %s %s %s %s",
+		line := fmt.Sprintf("%s%s%s%s %s %s %s %s %s %s",
 			l.marker(r), st.Color, st.Glyph, reset,
 			stateLabel(r.State), Fit(Age(r.Age), 4), Fit(r.Target(), 20), Fit(r.Name, nameW),
-			dim+Fit(filepath.Base(r.Path), 18)+reset)
+			UsageCols(r),
+			dim+Fit(filepath.Base(r.Path), 14)+reset)
 		switch {
 		case i == l.Cursor:
 			line = reverse + stripReset(line)
@@ -218,7 +228,11 @@ func Sidebar(l *List, others []Row, session string, focused bool, w, h int) []st
 	}
 	rows := l.Visible()
 	cur := l.clamp(len(rows))
+	plan := Plan(l.Limits, l.now(), false)
 	body := h - 2 - 3 // header above, summary and help below
+	if plan != "" {
+		body--
+	}
 	first, last := l.window(rows, cur, focused, body)
 	if first > 0 {
 		lines = append(lines, dim+Fit(fmt.Sprintf("  ↑ %d more", first), w)+reset)
@@ -227,13 +241,17 @@ func Sidebar(l *List, others []Row, session string, focused bool, w, h int) []st
 		r := rows[i]
 		st := StyleOf(r.State)
 		head := l.marker(r) + st.Color + st.Glyph + reset + " " + Fit(r.Name, w-3)
-		sub := l.marker(r) + dim + "  " + Fit(r.Window+"."+r.Index+" · "+filepath.Base(r.Path)+" · "+Age(r.Age), w-3) + reset
+		detail := r.Window + "." + r.Index + " · " + filepath.Base(r.Path) + " · " + Age(r.Age)
+		if r.Usage != nil && r.Usage.ContextUsed != nil {
+			detail = r.Window + "." + r.Index + " · ctx " + fmt.Sprintf("%.0f%%", *r.Usage.ContextUsed) + " · " + Age(r.Age) + " · " + filepath.Base(r.Path)
+		}
+		sub := l.marker(r) + dim + "  " + Fit(detail, w-3) + reset
 		switch {
 		case focused && i == cur:
 			head = reverse + " " + st.Glyph + " " + Fit(r.Name, w-3)
 		case r.ID == l.Current:
 			head = hereBar + hereBg + st.Color + st.Glyph + reset + hereBg + " " + bold + Fit(r.Name, w-3) + reset
-			sub = hereBar + hereBg + dim + "  " + Fit(r.Window+"."+r.Index+" · "+filepath.Base(r.Path)+" · "+Age(r.Age), w-3) + reset
+			sub = hereBar + hereBg + dim + "  " + Fit(detail, w-3) + reset
 		}
 		lines = append(lines, head, sub)
 	}
@@ -243,10 +261,17 @@ func Sidebar(l *List, others []Row, session string, focused bool, w, h int) []st
 	if len(rows) == 0 {
 		lines = append(lines, dim+" no agents here"+reset)
 	}
-	for len(lines) < h-3 {
+	tailLines := 3
+	if plan != "" {
+		tailLines = 4
+	}
+	for len(lines) < h-tailLines {
 		lines = append(lines, "")
 	}
 	lines = append(lines, dim+strings.Repeat("─", w)+reset)
+	if plan != "" {
+		lines = append(lines, " "+Fit("plan "+plan, w-1))
+	}
 	other := "other: " + Summary(Counts(others), false)
 	if len(others) == 0 {
 		other = "other: none"
@@ -333,4 +358,11 @@ func (l *List) window(rows []Row, cur int, focused bool, body int) (int, int) {
 		l.Top = 0
 	}
 	return l.Top, l.Top + fit
+}
+
+func (l *List) now() time.Time {
+	if l.Now.IsZero() {
+		return time.Now()
+	}
+	return l.Now
 }

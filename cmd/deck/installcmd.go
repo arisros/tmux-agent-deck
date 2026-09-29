@@ -50,8 +50,22 @@ func runInstall(args []string, add bool) error {
 		if err != nil {
 			return err
 		}
-	} else if after, err = install.Remove(before); err != nil {
-		return err
+		if !*rec {
+			var owned bool
+			if after, owned, err = install.SetStatusLine(after, guarded(bin, "statusline")); err != nil {
+				return err
+			}
+			if !owned {
+				fmt.Println("Note: you have your own statusLine, so the deck will not show token usage or plan limits.")
+			}
+		}
+	} else {
+		if after, err = install.Remove(before); err != nil {
+			return err
+		}
+		if after, err = install.RemoveStatusLine(after); err != nil {
+			return err
+		}
 	}
 
 	if string(before) == string(after) {

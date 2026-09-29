@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/arisros/tmux-agent-deck/internal/tmux"
+	"github.com/arisros/tmux-agent-deck/internal/usage"
 )
 
 var now = time.Unix(10_000, 0)
@@ -258,5 +259,37 @@ func TestWheelScrollsUnfocusedSidebar(t *testing.T) {
 	view = strings.Join(Sidebar(l, nil, "s", false, 34, 16), "\n")
 	if !strings.Contains(view, "agent 01") {
 		t.Fatalf("pane switch did not bring the current pane back:\n%s", view)
+	}
+}
+
+func TestUsageColumnsFit(t *testing.T) {
+	ctx := 42.0
+	rows := Agents([]tmux.Pane{
+		pane("%1", "a", "1", "running", "2.1.284", "✳ with usage", 0),
+		pane("%2", "a", "2", "idle", "2.1.284", "✳ without", 0),
+	}, now)
+	rows[0].Usage = &usage.Session{CostUSD: 12.5, InputTokens: 1_200_000, OutputTokens: 30_000, ContextUsed: &ctx}
+	l := &List{All: rows, Now: now, Limits: &usage.Limits{
+		FiveHour:      &usage.Window{UsedPercentage: 85, ResetsAt: usage.ResetTime{Time: now.Add(2 * time.Hour)}},
+		SevenDay:      &usage.Window{UsedPercentage: 12},
+		UpdatedAtUnix: now.Unix(),
+	}}
+	for _, w := range []int{80, 120, 200} {
+		popup := Popup(l, w, 12)
+		for _, line := range popup {
+			if Width(line) > w {
+				t.Errorf("width %d: line of %d cells: %q", w, Width(line), line)
+			}
+		}
+		joined := strings.Join(popup, "\n")
+		for _, want := range []string{"5h", "85%", "\x1b[31m", "42%", "1.2M", "$12.50"} {
+			if !strings.Contains(joined, want) {
+				t.Errorf("width %d: popup lacks %q", w, want)
+			}
+		}
+	}
+	side := strings.Join(Sidebar(l, nil, "a", false, 34, 14), "\n")
+	if !strings.Contains(side, "plan 5h 85%") || !strings.Contains(side, "ctx 42%") {
+		t.Errorf("sidebar lacks plan or context:\n%s", side)
 	}
 }

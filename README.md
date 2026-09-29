@@ -71,6 +71,15 @@ Requirements: tmux 3.2+ and Go 1.24+ (the plugin builds itself on first load).
 
 The pane you are in is marked with a cyan bar and a darker background, apart from the cursor. The sidebar lists the current session's agents plus a one-line count of the other sessions. There is one sidebar pane per session, which moves with you instead of being copied into every window.
 
+## Usage and plan limits
+
+`deck install --claude` also sets Claude Code's `statusLine` to `deck statusline`, unless you already have a status line of your own. Claude runs it on every status update with a documented JSON input, and the deck keeps what it needs from it:
+
+- per agent: context used, tokens, cost estimate (popup columns, sidebar detail line)
+- the plan's 5-hour and 7-day usage with reset times (popup header, sidebar footer, `deck list`)
+
+The deck does not parse transcript files (their format is internal to Claude Code) and calls no API. Claude's own status line under the prompt shows `model · ctx · 5h · 7d`.
+
 ## Options
 
 Set these before tpm loads the plugin.

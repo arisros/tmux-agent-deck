@@ -19,6 +19,7 @@ import (
 	"github.com/arisros/tmux-agent-deck/internal/store"
 	"github.com/arisros/tmux-agent-deck/internal/tmux"
 	"github.com/arisros/tmux-agent-deck/internal/ui"
+	"github.com/arisros/tmux-agent-deck/internal/usage"
 )
 
 // Views reconcile agents that have looked busy this long before drawing, so a
@@ -27,7 +28,16 @@ const staleAfter = 2 * time.Second
 
 // agents lists panes once, repairs stale busy agents, and lists again only
 // when a repair may have changed something.
-func agents(d *deck.Deck, c tmux.Client, repair bool) ([]tmux.Pane, []ui.Row, error) {
+func agents(d *deck.Deck, c tmux.Client, repair bool) ([]tmux.Pane, []ui.Row, *usage.Limits, error) {
+	panes, rows, err := listAgents(d, c, repair)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	sessions, limits := usage.Load(usage.DefaultDir(d.Dir))
+	return panes, ui.Attach(rows, sessions), limits, nil
+}
+
+func listAgents(d *deck.Deck, c tmux.Client, repair bool) ([]tmux.Pane, []ui.Row, error) {
 	panes, err := c.ListPanes()
 	if err != nil {
 		return nil, nil, err
@@ -67,11 +77,11 @@ func runPopup(args []string) error {
 	if err != nil {
 		return err
 	}
-	_, rows, err := agents(d, c, true)
+	_, rows, limits, err := agents(d, c, true)
 	if err != nil {
 		return err
 	}
-	l := &ui.List{All: rows, Current: *current}
+	l := &ui.List{All: rows, Current: *current, Limits: limits}
 
 	t, err := ui.OpenTerm()
 	if err != nil {
@@ -125,11 +135,11 @@ func runPopup(args []string) error {
 
 func refresh(d *deck.Deck, c tmux.Client, l *ui.List, repair bool) {
 	sel, had := l.Selected()
-	_, rows, err := agents(d, c, repair)
+	_, rows, limits, err := agents(d, c, repair)
 	if err != nil {
 		return
 	}
-	l.All = rows
+	l.All, l.Limits = rows, limits
 	if had {
 		l.Keep(sel.ID)
 	}
@@ -270,10 +280,11 @@ func sidebarRun(c tmux.Client, session string) error {
 	// A wake-up only re-lists panes; reading busy agents' screens to repair
 	// silent endings is the slow part, left to the periodic tick.
 	load := func(repair bool) {
-		panes, rows, err := agents(d, c, repair)
+		panes, rows, limits, err := agents(d, c, repair)
 		if err != nil {
 			return
 		}
+		l.Limits = limits
 		for _, p := range panes {
 			if p.ID == self {
 				alone = p.WindowPanes == 1
@@ -403,7 +414,7 @@ func runList(args []string) error {
 	if err != nil {
 		return err
 	}
-	_, rows, err := agents(d, c, true)
+	_, rows, limits, err := agents(d, c, true)
 	if err != nil {
 		return err
 	}
@@ -419,6 +430,9 @@ func runList(args []string) error {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		return enc.Encode(out)
+	}
+	if plan := ui.Plan(limits, time.Now(), false); plan != "" {
+		fmt.Println("plan", plan)
 	}
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	for _, r := range rows {

@@ -257,3 +257,45 @@ func format(b []byte) ([]byte, error) {
 	out.WriteByte('\n')
 	return out.Bytes(), nil
 }
+
+// SetStatusLine points Claude's statusLine at command, unless the user has a
+// status line of their own: that one is theirs, and the deck only reads
+// usage when it owns the slot. It reports whether the deck owns it after.
+func SetStatusLine(settings []byte, command string) ([]byte, bool, error) {
+	if len(bytes.TrimSpace(settings)) == 0 {
+		settings = []byte("{}")
+	}
+	root, err := parseObject(settings)
+	if err != nil {
+		return nil, false, err
+	}
+	if raw, ok := root.get("statusLine"); ok && !bytes.Contains(raw, []byte(Marker)) {
+		out, err := format(root.raw())
+		return out, false, err
+	}
+	sl := object{{"type", mustJSON("command")}, {"command", mustJSON(command)}, {"padding", mustJSON(0)}}
+	root = root.set("statusLine", sl.raw())
+	out, err := format(root.raw())
+	return out, true, err
+}
+
+// RemoveStatusLine drops the statusLine if the deck owns it.
+func RemoveStatusLine(settings []byte) ([]byte, error) {
+	if len(bytes.TrimSpace(settings)) == 0 {
+		settings = []byte("{}")
+	}
+	root, err := parseObject(settings)
+	if err != nil {
+		return nil, err
+	}
+	if raw, ok := root.get("statusLine"); ok && bytes.Contains(raw, []byte(Marker)) {
+		kept := object{}
+		for _, m := range root {
+			if m.Key != "statusLine" {
+				kept = append(kept, m)
+			}
+		}
+		root = kept
+	}
+	return format(root.raw())
+}

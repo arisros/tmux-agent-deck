@@ -12,6 +12,7 @@ import (
 	"github.com/arisros/tmux-agent-deck/internal/machine"
 	"github.com/arisros/tmux-agent-deck/internal/store"
 	"github.com/arisros/tmux-agent-deck/internal/tmux"
+	"github.com/arisros/tmux-agent-deck/internal/usage"
 )
 
 // Tmux is the subset of tmux the adapter uses, so tests can fake it.
@@ -69,6 +70,7 @@ func (d *Deck) Hook(p hook.Payload, pane string) error {
 		return d.Tmux.Batch(clear(pane))
 	case hook.Begin:
 		store.Prune(d.Dir, 72*time.Hour)
+		usage.Prune(usage.DefaultDir(d.Dir), 72*time.Hour)
 		var snap []byte
 		if existed {
 			snap = rec.Snapshot

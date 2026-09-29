@@ -14,13 +14,25 @@ import (
 
 	"github.com/arisros/tmux-agent-deck/internal/machine"
 	"github.com/arisros/tmux-agent-deck/internal/tmux"
+	"github.com/arisros/tmux-agent-deck/internal/usage"
 )
 
 // Row is one agent.
 type Row struct {
 	tmux.Pane
-	Name string
-	Age  time.Duration
+	Name  string
+	Age   time.Duration
+	Usage *usage.Session // nil until Claude has run the deck's statusLine for it
+}
+
+// Attach joins each row to the usage its Claude session reported.
+func Attach(rows []Row, sessions map[string]usage.Session) []Row {
+	for i := range rows {
+		if s, ok := sessions[rows[i].SID]; ok {
+			rows[i].Usage = &s
+		}
+	}
+	return rows
 }
 
 // Target is the tmux address shown for a row.
@@ -228,4 +240,74 @@ func cellWidth(r rune) int {
 		return 2
 	}
 	return 1
+}
+
+// Bar draws a used percentage as a fixed-width bar, green to red as it fills.
+func Bar(pct float64, width int) string {
+	if pct < 0 {
+		pct = 0
+	}
+	if pct > 100 {
+		pct = 100
+	}
+	full := int(pct/100*float64(width) + 0.5)
+	color := "\x1b[32m"
+	switch {
+	case pct >= 80:
+		color = "\x1b[31m"
+	case pct >= 50:
+		color = "\x1b[33m"
+	}
+	return color + strings.Repeat("▰", full) + "\x1b[90m" + strings.Repeat("▱", width-full) + reset
+}
+
+// Plan is the plan-usage summary; long adds bars and reset times.
+func Plan(l *usage.Limits, now time.Time, long bool) string {
+	if l == nil {
+		return ""
+	}
+	part := func(name string, w *usage.Window) string {
+		if w == nil {
+			return ""
+		}
+		s := fmt.Sprintf("%s %.0f%%", name, w.UsedPercentage)
+		if long {
+			s = fmt.Sprintf("%s %s %.0f%%", name, Bar(w.UsedPercentage, 10), w.UsedPercentage)
+			if !w.ResetsAt.IsZero() {
+				s += "\x1b[90m resets " + resetsAt(w.ResetsAt.Time, now) + reset
+			}
+		}
+		return s
+	}
+	var parts []string
+	for _, p := range []string{part("5h", l.FiveHour), part("7d", l.SevenDay)} {
+		if p != "" {
+			parts = append(parts, p)
+		}
+	}
+	out := strings.Join(parts, "   ")
+	if age := now.Sub(time.Unix(l.UpdatedAtUnix, 0)); age > 10*time.Minute {
+		out += "\x1b[90m (" + Age(age) + " ago)" + reset
+	}
+	return out
+}
+
+func resetsAt(t, now time.Time) string {
+	if t.Sub(now) < 20*time.Hour {
+		return t.Local().Format("15:04")
+	}
+	return t.Local().Format("Mon 15:04")
+}
+
+// UsageCols is the popup's context, token, and cost columns for a row.
+func UsageCols(r Row) string {
+	if r.Usage == nil {
+		return "\x1b[90m" + Fit("  –", 5) + " " + Fit("", 7) + " " + Fit("", 7) + reset
+	}
+	ctx := "  –"
+	if r.Usage.ContextUsed != nil {
+		ctx = fmt.Sprintf("%3.0f%%", *r.Usage.ContextUsed)
+	}
+	return Fit(ctx, 5) + " " + Fit(usage.Tokens(r.Usage.InputTokens+r.Usage.OutputTokens), 7) + " " +
+		Fit(fmt.Sprintf("$%.2f", r.Usage.CostUSD), 7)
 }

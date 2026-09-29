@@ -62,6 +62,14 @@ func runDoctor(_ []string) error {
 		default:
 			check(true, "Claude hooks", strconv.Itoa(len(events))+" events")
 		}
+		switch {
+		case strings.Contains(string(settings), "deck") && strings.Contains(string(settings), " statusline"):
+			check(true, "statusLine", "the deck records token usage and plan limits")
+		case strings.Contains(string(settings), `"statusLine"`):
+			check(true, "statusLine", "yours is kept, so token usage and plan limits are not shown")
+		default:
+			check(false, "statusLine", "not set; deck install --claude --apply adds it for usage and plan limits")
+		}
 		if strings.Contains(string(settings), "window-status-style") {
 			check(false, "no old tab coloring hooks", "a hook still sets window-status-style and will fight the deck's icons")
 		}

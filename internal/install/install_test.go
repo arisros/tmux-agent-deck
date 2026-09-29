@@ -143,3 +143,23 @@ func TestRejectsNonObject(t *testing.T) {
 		t.Fatal("want error")
 	}
 }
+
+func TestStatusLineTakesOnlyAFreeSlot(t *testing.T) {
+	cmd := "/p/tmux-agent-deck/bin/deck statusline"
+	out, owned, err := SetStatusLine([]byte(settings), cmd)
+	if err != nil || !owned || !strings.Contains(string(out), cmd) {
+		t.Fatalf("free slot not taken: %v %v\n%s", owned, err, out)
+	}
+	back, err := RemoveStatusLine(out)
+	if err != nil || string(back) != settings {
+		t.Errorf("remove did not restore the file:\n%s", back)
+	}
+	mine := `{"statusLine":{"type":"command","command":"~/bin/my-line"}}`
+	out, owned, _ = SetStatusLine([]byte(mine), cmd)
+	if owned || strings.Contains(string(out), "deck") {
+		t.Errorf("replaced the user's own status line:\n%s", out)
+	}
+	if out, _ := RemoveStatusLine([]byte(mine)); !strings.Contains(string(out), "my-line") {
+		t.Errorf("removed the user's own status line")
+	}
+}

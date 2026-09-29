@@ -16,6 +16,7 @@ import (
 	"github.com/arisros/tmux-agent-deck/internal/record"
 	"github.com/arisros/tmux-agent-deck/internal/store"
 	"github.com/arisros/tmux-agent-deck/internal/tmux"
+	"github.com/arisros/tmux-agent-deck/internal/usage"
 )
 
 func newDeck() (*deck.Deck, tmux.Client, error) {
@@ -88,4 +89,16 @@ func runDescribe() error {
 	}
 	fmt.Print(render.Mermaid(m.Describe(), render.MermaidOptions{Direction: "LR"}))
 	return nil
+}
+
+// runStatusLine is Claude's statusLine command. Like a hook it must never get
+// in Claude's way: on any error it prints an empty line.
+func runStatusLine(stdin io.Reader) {
+	in, err := usage.Parse(stdin)
+	if err != nil {
+		fmt.Println()
+		return
+	}
+	_ = usage.Record(usage.DefaultDir(store.DefaultDir()), in, time.Now())
+	fmt.Println(usage.Line(in))
 }
