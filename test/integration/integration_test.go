@@ -170,3 +170,18 @@ func TestSidebarCoexistsWithStickyPane(t *testing.T) {
 		t.Error("sticky pane took the left edge from the sidebar")
 	}
 }
+
+// An agent that was idle when the deck was installed has fired no hook, yet
+// must be listed.
+func TestAgentsWithoutHooksAreDiscovered(t *testing.T) {
+	h := newHarness(t)
+	quiet := h.tmux("split-window", "-d", "-t", "alpha", "-P", "-F", "#{pane_id}",
+		`printf '❯ \n  ⏸ manual mode on · ? for shortcuts\n'; exec `+h.fake)
+	h.eventually(func() bool { return h.opt(quiet, "pane_current_command") == "2.1.999" }, "fake claude")
+	if out := h.deck("", "list"); !strings.Contains(out, "idle") {
+		t.Fatalf("quiet agent not listed:\n%s", out)
+	}
+	if got := h.opt(quiet, "@deck_state"); got != "idle" {
+		t.Errorf("state = %q, want idle published for the tab and border", got)
+	}
+}

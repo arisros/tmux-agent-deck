@@ -12,6 +12,7 @@ import (
 
 	"github.com/arisros/tmux-agent-deck/internal/hook"
 	"github.com/arisros/tmux-agent-deck/internal/machine"
+	"github.com/arisros/tmux-agent-deck/internal/tmux"
 )
 
 type fakeTmux struct {
@@ -330,4 +331,25 @@ func readFixture(t *testing.T, name string) []string {
 		out = append(out, string(b))
 	}
 	return out
+}
+
+func TestDiscoverUnknownClaudePanes(t *testing.T) {
+	f := newFake()
+	f.screen = screenWorking
+	d := newDeck(t, f)
+	panes := []tmux.Pane{
+		{ID: "%1", Command: "2.1.284"},                   // unknown agent: discovered
+		{ID: "%2", Command: "2.1.284", State: "waiting"}, // known: left alone
+		{ID: "%3", Command: "zsh"},                       // not claude
+		{ID: "%4", Command: "2.1.284", Sidebar: "1"},     // the deck's own sidebar
+	}
+	if n := d.Discover(panes); n != 1 {
+		t.Fatalf("discovered %d panes, want 1", n)
+	}
+	if f.state("%1") != machine.Running || f.state("%2") != "" || f.state("%3") != "" {
+		t.Errorf("states: %v", f.opts)
+	}
+	if n := d.Discover([]tmux.Pane{{ID: "%1", Command: "2.1.284", State: "running"}}); n != 0 {
+		t.Errorf("rediscovered a known pane")
+	}
 }

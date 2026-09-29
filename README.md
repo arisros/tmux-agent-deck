@@ -25,6 +25,7 @@ flowchart LR
 
 - **Event-driven.** Claude Code hooks push state; nothing polls. There is no daemon and no ticker, so an idle server runs no deck process at all (an open sidebar blocks in `tmux wait-for`).
 - **tmux renders the icons.** Tabs and borders use format strings that tmux evaluates on redraw, so showing state costs no process.
+- **Agents already running are found.** A Claude pane that has fired no hook yet (idle when the plugin was installed) is read from its screen once, so every agent shows up at once.
 - **Silent endings are repaired.** Pressing Esc mid-turn and denying a permission fire no hook. When you leave such a pane, or open a view, the deck reads Claude's footer to correct the state.
 - **The state machine** is a [fate](https://github.com/arisros/fate) statechart, drawn in [docs/state-machine.md](docs/state-machine.md). The transitions come from sequences recorded in real sessions ([test/fixtures](test/fixtures)), not only from the hook documentation.
 
@@ -63,10 +64,10 @@ Requirements: tmux 3.2+ and Go 1.24+ (the plugin builds itself on first load).
 
 | Key | Action |
 |---|---|
-| `prefix a` | popup of agents in every session, most urgent first. `j`/`k` or arrows move, `/` filters, Enter jumps, `q` closes |
-| `prefix e` | toggle the sidebar for this session. It follows you across windows. Focus it (click, or your pane navigation) to use `j`/`k` and Enter |
+| `prefix a` | popup of agents in every session, most urgent first, idle ones included. `j`/`k` or arrows move, `/` filters, Enter jumps, `x` kills the agent's pane (asks `y/n`), `q` closes |
+| `prefix e` | toggle the sidebar for this session. It follows you across windows. Focus it (click, or your pane navigation) to use `j`/`k`, Enter and `x` |
 
-The sidebar lists the current session's agents plus a one-line count of the other sessions. There is one sidebar pane per session, which moves with you instead of being copied into every window.
+The pane you are in is marked with a cyan bar and a darker background, apart from the cursor. The sidebar lists the current session's agents plus a one-line count of the other sessions. There is one sidebar pane per session, which moves with you instead of being copied into every window.
 
 ## Options
 

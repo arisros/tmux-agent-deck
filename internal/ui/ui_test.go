@@ -137,3 +137,43 @@ func TestViewsFitTheScreen(t *testing.T) {
 		}
 	}
 }
+
+func TestKillNeedsConfirmation(t *testing.T) {
+	l := &List{All: Agents([]tmux.Pane{pane("%1", "a", "1", "idle", "2.1.284", "✳ old one", 0)}, now)}
+	if l.Handle(Key{Rune: 'x'}) != Stay || !l.Confirming {
+		t.Fatal("x should ask first")
+	}
+	if !strings.Contains(Popup(l, 80, 10)[9], "kill old one? y/n") {
+		t.Errorf("footer does not ask: %q", Popup(l, 80, 10)[9])
+	}
+	if l.Handle(Key{Rune: 'n'}) != Stay || l.Confirming {
+		t.Error("n should cancel")
+	}
+	l.Handle(Key{Rune: 'x'})
+	if l.Handle(Key{Rune: 'y'}) != Kill {
+		t.Error("x then y should kill")
+	}
+}
+
+func TestCurrentPaneIsMarked(t *testing.T) {
+	l := &List{All: Agents([]tmux.Pane{
+		pane("%1", "a", "1", "waiting", "2.1.284", "✳ first", 0),
+		pane("%2", "a", "2", "idle", "2.1.284", "✳ here", 0),
+	}, now), Current: "%2"}
+	popup := Popup(l, 90, 8)
+	if !strings.HasPrefix(popup[3], hereBar) || !strings.Contains(popup[3], hereBg) {
+		t.Errorf("current row not marked: %q", popup[3])
+	}
+	if strings.HasPrefix(popup[2], hereBar) {
+		t.Errorf("cursor row marked as current: %q", popup[2])
+	}
+	side := Sidebar(l, nil, "a", false, 34, 12)
+	if !strings.HasPrefix(side[4], hereBar) || !strings.HasPrefix(side[5], hereBar) {
+		t.Errorf("sidebar current rows not marked:\n%q\n%q", side[4], side[5])
+	}
+	for _, line := range append(popup, side...) {
+		if Width(line) > 90 {
+			t.Errorf("line of %d cells", Width(line))
+		}
+	}
+}

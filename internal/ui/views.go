@@ -10,7 +10,18 @@ const (
 	dim     = "\x1b[90m"
 	bold    = "\x1b[1m"
 	reverse = "\x1b[7m"
+	// here marks the pane the user is in: a bar and a quiet background.
+	hereBar = "\x1b[1;36m▌\x1b[0m"
+	hereBg  = "\x1b[48;5;236m"
 )
+
+// marker is the left gutter of a row: a bar for the pane the user is in.
+func (l *List) marker(r Row) string {
+	if l.Current != "" && r.ID == l.Current {
+		return hereBar
+	}
+	return " "
+}
 
 // List is a cursor over rows with an optional text filter.
 type List struct {
@@ -18,6 +29,11 @@ type List struct {
 	Cursor    int
 	Filter    string
 	Filtering bool
+	// Confirming is set after "x": the next key decides whether the agent
+	// under the cursor is killed.
+	Confirming bool
+	// Current is the pane the user is in, marked apart from the cursor.
+	Current string
 }
 
 // Visible is All narrowed by the filter.
@@ -73,10 +89,18 @@ const (
 	Stay Outcome = iota
 	Jump
 	Quit
+	Kill
 )
 
 // Handle applies a key: vim motions and arrows, "/" to filter, enter to jump.
 func (l *List) Handle(k Key) Outcome {
+	if l.Confirming {
+		l.Confirming = false
+		if k.Rune == 'y' || k.Rune == 'Y' {
+			return Kill
+		}
+		return Stay
+	}
 	if l.Filtering {
 		switch {
 		case k.Name == "enter" || k.Name == "down" || k.Name == "up":
@@ -111,6 +135,10 @@ func (l *List) Handle(k Key) Outcome {
 		return Jump
 	case k.Rune == '/':
 		l.Filtering = true
+	case k.Rune == 'x':
+		if _, ok := l.Selected(); ok {
+			l.Confirming = true
+		}
 	case k.Name == "esc" || k.Rune == 'q' || k.Name == "ctrl-c":
 		return Quit
 	}
@@ -138,12 +166,15 @@ func Popup(l *List, w, h int) []string {
 	for i := start; i < len(rows) && i < start+body; i++ {
 		r := rows[i]
 		st := Styles[r.State]
-		line := fmt.Sprintf(" %s%s%s %s %s %s %s %s",
-			st.Color, st.Glyph, reset,
+		line := fmt.Sprintf("%s%s%s%s %s %s %s %s %s",
+			l.marker(r), st.Color, st.Glyph, reset,
 			Fit(r.State, 8), Fit(Age(r.Age), 4), Fit(r.Target(), 20), Fit(r.Name, nameW),
 			dim+Fit(filepath.Base(r.Path), 18)+reset)
-		if i == l.Cursor {
+		switch {
+		case i == l.Cursor:
 			line = reverse + stripReset(line)
+		case r.ID == l.Current:
+			line = hereBar + hereBg + strings.ReplaceAll(strings.TrimPrefix(line, hereBar), reset, reset+hereBg)
 		}
 		lines = append(lines, Fit(line, w))
 	}
@@ -153,7 +184,7 @@ func Popup(l *List, w, h int) []string {
 	for len(lines) < h-1 {
 		lines = append(lines, "")
 	}
-	lines = append(lines, footer(l, w, "j/k move · enter jump · / filter · q close"))
+	lines = append(lines, footer(l, w, "j/k move · enter jump · / filter · x kill · q close"))
 	return lines
 }
 
@@ -171,14 +202,16 @@ func Sidebar(l *List, others []Row, session string, focused bool, w, h int) []st
 			break
 		}
 		st := Styles[r.State]
-		head := " " + st.Color + st.Glyph + reset + " " + Fit(r.Name, w-3)
-		if focused && i == cur {
+		head := l.marker(r) + st.Color + st.Glyph + reset + " " + Fit(r.Name, w-3)
+		sub := l.marker(r) + dim + "  " + Fit(r.Window+"."+r.Index+" · "+filepath.Base(r.Path)+" · "+Age(r.Age), w-3) + reset
+		switch {
+		case focused && i == cur:
 			head = reverse + " " + st.Glyph + " " + Fit(r.Name, w-3)
-		} else if r.PaneActive && r.WindowActive {
-			head = " " + st.Color + st.Glyph + reset + " " + bold + Fit(r.Name, w-3) + reset
+		case r.ID == l.Current:
+			head = hereBar + hereBg + st.Color + st.Glyph + reset + hereBg + " " + bold + Fit(r.Name, w-3) + reset
+			sub = hereBar + hereBg + dim + "  " + Fit(r.Window+"."+r.Index+" · "+filepath.Base(r.Path)+" · "+Age(r.Age), w-3) + reset
 		}
-		lines = append(lines, head,
-			dim+"   "+Fit(r.Window+"."+r.Index+" · "+filepath.Base(r.Path)+" · "+Age(r.Age), w-3)+reset)
+		lines = append(lines, head, sub)
 	}
 	if len(rows) == 0 {
 		lines = append(lines, dim+" no agents here"+reset)
@@ -192,15 +225,20 @@ func Sidebar(l *List, others []Row, session string, focused bool, w, h int) []st
 		other = "other: none"
 	}
 	lines = append(lines, " "+Fit(other, w-1))
-	help := "j/k · enter · q"
+	help := "j/k · enter · x kill · q"
 	if !focused {
 		help = "C-h to pick"
 	}
-	lines = append(lines, dim+" "+Fit(help, w-1)+reset)
+	lines = append(lines, footer(l, w, help))
 	return lines
 }
 
 func footer(l *List, w int, help string) string {
+	if l.Confirming {
+		if r, ok := l.Selected(); ok {
+			return "\x1b[1;31m" + " " + Fit("kill "+r.Name+"? y/n", w-1) + reset
+		}
+	}
 	if l.Filtering || l.Filter != "" {
 		cursor := ""
 		if l.Filtering {

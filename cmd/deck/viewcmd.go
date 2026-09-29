@@ -31,6 +31,11 @@ func agents(d *deck.Deck, c tmux.Client) ([]tmux.Pane, []ui.Row, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	if d.Discover(panes) > 0 {
+		if panes, err = c.ListPanes(); err != nil {
+			return nil, nil, err
+		}
+	}
 	now := time.Now()
 	var stale []tmux.Pane
 	for _, r := range ui.Agents(panes, now) {
@@ -50,6 +55,7 @@ func agents(d *deck.Deck, c tmux.Client) ([]tmux.Pane, []ui.Row, error) {
 func runPopup(args []string) error {
 	fs := flag.NewFlagSet("popup", flag.ContinueOnError)
 	client := fs.String("client", "", "tmux client to switch")
+	current := fs.String("pane", "", "pane the popup was opened from")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -61,7 +67,7 @@ func runPopup(args []string) error {
 	if err != nil {
 		return err
 	}
-	l := &ui.List{All: rows}
+	l := &ui.List{All: rows, Current: *current}
 
 	t, err := ui.OpenTerm()
 	if err != nil {
@@ -88,6 +94,11 @@ func runPopup(args []string) error {
 			case ui.Jump:
 				if r, ok := l.Selected(); ok {
 					return jump(c, *client, r.ID, true)
+				}
+			case ui.Kill:
+				if r, ok := l.Selected(); ok {
+					_, _ = c.Run("kill-pane", "-t", r.ID)
+					refresh(d, c, l)
 				}
 			}
 		case <-changed:
@@ -248,6 +259,11 @@ func sidebarRun(c tmux.Client, session string) error {
 				focused = p.PaneActive && p.WindowActive && p.Attached
 				name = p.Session
 			}
+			// The pane the user is in: the active pane of the session's
+			// current window, unless that is the sidebar itself.
+			if p.SessionID == session && p.WindowActive && p.PaneActive && p.ID != self {
+				l.Current = p.ID
+			}
 		}
 		sel, had := l.Selected()
 		l.All = split(rows)
@@ -285,6 +301,10 @@ func sidebarRun(c tmux.Client, session string) error {
 			case ui.Jump:
 				if r, ok := l.Selected(); ok {
 					_ = jump(c, "", r.ID, false)
+				}
+			case ui.Kill:
+				if r, ok := l.Selected(); ok {
+					_, _ = c.Run("kill-pane", "-t", r.ID)
 				}
 			}
 			load()

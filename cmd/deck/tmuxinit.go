@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/arisros/tmux-agent-deck/internal/deck"
+	"github.com/arisros/tmux-agent-deck/internal/store"
 	"github.com/arisros/tmux-agent-deck/internal/tmux"
 )
 
@@ -77,7 +79,7 @@ func runTmuxInit(_ []string) error {
 		[]string{"set-option", "-g", "@deck_pane_icon", paneIconFormat},
 		[]string{"set-option", "-g", "@deck_window_icon", windowIconFormat},
 		[]string{"bind-key", values["@deck-popup-key"], "display-popup", "-E", "-w", "90%", "-h", "70%", "-b", "rounded",
-			"-T", " agents ", bin + " popup --client #{q:client_name}"},
+			"-T", " agents ", bin + " popup --client #{q:client_name} --pane #{pane_id}"},
 		[]string{"bind-key", values["@deck-sidebar-key"], "run-shell", "-b",
 			bin + " sidebar toggle --session #{q:session_id} --window #{q:window_id}"},
 	)
@@ -93,5 +95,15 @@ func runTmuxInit(_ []string) error {
 		`if-shell -F "#{||:#{==:#{@deck_state},running},#{==:#{@deck_state},waiting}}" "run-shell -b '` + bin + ` reconcile #{pane_id}'"`})
 	cmds = append(cmds, []string{"set-hook", "-g", "session-window-changed[78]",
 		`if-shell -F "#{@deck_sidebar_pane}" "run-shell -b '` + bin + ` sidebar follow --session #{q:session_id} --window #{q:window_id}'"`})
-	return c.Batch(cmds)
+	if err := c.Batch(cmds); err != nil {
+		return err
+	}
+	// Agents already running when the plugin loads show up at once, not only
+	// after their next hook.
+	if panes, err := c.ListPanes(); err == nil {
+		if d, err := deck.New(c, store.DefaultDir()); err == nil {
+			d.Discover(panes)
+		}
+	}
+	return nil
 }

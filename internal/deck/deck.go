@@ -155,6 +155,43 @@ func (d *Deck) ReconcileStale(panes []tmux.Pane, minAge time.Duration) {
 	}
 }
 
+// Discover publishes a state for every Claude pane the deck has not heard
+// from yet, read from its screen. An agent idle at its prompt when the hooks
+// were installed fires no hook until it is used again, and would otherwise
+// stay invisible. The state has no session record behind it; the session's
+// next hook creates one and takes over. It returns how many panes it set.
+func (d *Deck) Discover(panes []tmux.Pane) int {
+	now := strconv.FormatInt(d.Now().Unix(), 10)
+	var cmds [][]string
+	for _, p := range panes {
+		if p.State != "" || p.Sidebar != "" || !tmux.IsClaude(p.Command) {
+			continue
+		}
+		screen, err := d.Tmux.Capture(p.ID)
+		if err != nil {
+			continue
+		}
+		state := machine.Idle
+		switch Classify(screen) {
+		case machine.ScreenWorking:
+			state = machine.Running
+		case machine.ScreenDialog:
+			state = machine.Waiting
+		}
+		cmds = append(cmds,
+			[]string{"set-option", "-p", "-t", p.ID, "@deck_state", state},
+			[]string{"set-option", "-p", "-t", p.ID, "@deck_since", now})
+	}
+	if len(cmds) == 0 {
+		return 0
+	}
+	cmds = append(cmds, []string{"wait-for", "-S", Signal})
+	if err := d.Tmux.Batch(cmds); err != nil {
+		return 0
+	}
+	return (len(cmds) - 1) / 2
+}
+
 func (d *Deck) send(pane, sid string, ev machine.Event) error {
 	l, err := store.Open(d.Dir, sid)
 	if err != nil {
