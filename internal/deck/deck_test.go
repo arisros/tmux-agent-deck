@@ -225,6 +225,18 @@ const (
    4. No
  Esc to cancel · Tab to amend
 `
+	// Captured from this project's own session: busy, with the user typing
+	// a message that Claude queues. The footer hides "esc to interrupt".
+	screenTypingWhileBusy = `────────────────────────────────
+❯ need reload or what?
+────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← 5 agents
+`
+	screenQueued = `────────────────────────────────
+❯ Press up to edit queued messages
+────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← 5 agents
+`
 	screenQuestion = `❯ 1. Blue
   2. Red
   6. Chat about this
@@ -239,8 +251,11 @@ func TestClassify(t *testing.T) {
 		screenWorking:  machine.ScreenWorking,
 		screenDialog:   machine.ScreenDialog,
 		screenQuestion: machine.ScreenDialog,
-		"":             "",
-		"$ ls\nfoo\n":  "",
+		// Typing into a busy agent must not read as idle.
+		screenTypingWhileBusy: "",
+		screenQueued:          machine.ScreenWorking,
+		"":                    "",
+		"$ ls\nfoo\n":         "",
 	}
 	for screen, want := range cases {
 		if got := Classify(screen); got != want {

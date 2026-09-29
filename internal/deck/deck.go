@@ -250,6 +250,10 @@ func clear(pane string) [][]string {
 
 // Classify reads Claude Code's footer. It answers "" when unsure, and callers
 // then leave the state alone: a stale state beats a wrong one.
+//
+// Idle needs two signs: an idle footer and an empty input line. While the
+// user types into a busy session, Claude hides "esc to interrupt", so the
+// footer alone would misread a working agent as idle.
 func Classify(screen string) string {
 	lines := strings.Split(strings.TrimRight(screen, "\n "), "\n")
 	var tail []string
@@ -269,11 +273,29 @@ func Classify(screen string) string {
 	switch {
 	case has("Do you want to proceed?"), has("Enter to select"), has("Esc to cancel"):
 		return machine.ScreenDialog
-	case has("esc to interrupt"):
+	case has("esc to interrupt"), has("queued messages"):
 		return machine.ScreenWorking
-	case len(tail) > 0 && (strings.Contains(tail[0], "for shortcuts") ||
-		strings.Contains(tail[0], "shift+tab to cycle") || strings.Contains(tail[0], "mode on")):
+	case len(tail) > 0 && idleFooter(tail[0]) && emptyInput(tail):
 		return machine.ScreenIdle
 	}
 	return ""
+}
+
+func idleFooter(line string) bool {
+	return strings.Contains(line, "for shortcuts") || strings.Contains(line, "shift+tab to cycle") ||
+		strings.Contains(line, "mode on")
+}
+
+// emptyInput reports whether Claude's prompt line holds no typed text; the
+// grey suggestion Claude shows in an empty prompt counts as empty.
+func emptyInput(tail []string) bool {
+	for _, l := range tail {
+		t := strings.TrimSpace(l)
+		if !strings.HasPrefix(t, "❯") {
+			continue
+		}
+		rest := strings.TrimSpace(strings.TrimPrefix(t, "❯"))
+		return rest == "" || strings.HasPrefix(rest, "Try \"")
+	}
+	return false
 }
