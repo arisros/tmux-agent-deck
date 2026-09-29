@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"syscall"
@@ -66,7 +67,8 @@ func listAgents(d *deck.Deck, c tmux.Client, repair bool) ([]tmux.Pane, []ui.Row
 	return panes, ui.Agents(panes, now), nil
 }
 
-func runPopup(args []string) error {
+func runPopup(args []string) (err error) {
+	defer logFailure("popup", &err)
 	fs := flag.NewFlagSet("popup", flag.ContinueOnError)
 	client := fs.String("client", "", "tmux client to switch")
 	current := fs.String("pane", "", "pane the popup was opened from")
@@ -254,7 +256,8 @@ func sidebarFollow(c tmux.Client, session, window string) error {
 	})
 }
 
-func sidebarRun(c tmux.Client, session string) error {
+func sidebarRun(c tmux.Client, session string) (err error) {
+	defer logFailure("sidebar", &err)
 	d, err := deck.New(c, store.DefaultDir())
 	if err != nil {
 		return err
@@ -462,4 +465,15 @@ func logView(reason string, input []string) {
 	}
 	defer f.Close()
 	fmt.Fprintf(f, "%s %s input=%s\n", time.Now().Format(time.RFC3339), reason, strings.Join(input, " "))
+}
+
+// logFailure records a view that ends in an error or a panic. Inside a tmux
+// popup, stderr vanishes with the popup, so this log is the only trace.
+func logFailure(view string, err *error) {
+	if r := recover(); r != nil {
+		*err = fmt.Errorf("panic: %v\n%s", r, debug.Stack())
+	}
+	if *err != nil {
+		logView(view+": error: "+(*err).Error(), nil)
+	}
 }
