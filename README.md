@@ -6,10 +6,12 @@ See which Claude Code agents need you, which have finished, and which are still 
 
 | State | Glyph | Meaning |
 |---|---|---|
-| waiting | ◆ red | Claude is blocked on you: a permission prompt or a question |
-| done | ✔ green | the turn finished while you were elsewhere; it clears when you look at the pane |
-| running | ● yellow | Claude is working, including background tasks it will resume from |
+| waiting | ◆ white on red | Claude is blocked on you: a permission prompt or a question |
+| running | ● green, pulsing | Claude is working, including background tasks it will resume from |
+| done | ✔ blue | the turn finished while you were elsewhere; it clears when you look at the pane |
 | idle | ○ grey | at its prompt, and you have seen it |
+
+The running dot pulses in the popup and sidebar while they are open. In tabs and borders it uses the terminal's blink attribute, so it pulses where the terminal supports blinking text and is a steady green dot elsewhere; tmux never redraws to animate it.
 
 ## How it works
 

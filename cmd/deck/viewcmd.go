@@ -80,11 +80,19 @@ func runPopup(args []string) error {
 	keys, changed := t.Keys(), ui.Watch(ctx, c.Flags(), deck.Signal)
 	tick := time.NewTicker(5 * time.Second)
 	defer tick.Stop()
+	anim := time.NewTicker(250 * time.Millisecond)
+	defer anim.Stop()
 
 	for {
 		w, h := t.Size()
 		t.Draw(ui.Popup(l, w, h))
+		frames := anim.C
+		if !ui.Animated(l.Visible()) {
+			frames = nil // nothing to pulse: stay asleep until input or a hook
+		}
 		select {
+		case <-frames:
+			ui.Pulse++
 		case k, ok := <-keys:
 			if !ok {
 				logView("popup: input closed", t.Trace())
@@ -291,11 +299,19 @@ func sidebarRun(c tmux.Client, session string) error {
 	signal.Notify(winch, syscall.SIGWINCH)
 	tick := time.NewTicker(5 * time.Second)
 	defer tick.Stop()
+	anim := time.NewTicker(250 * time.Millisecond)
+	defer anim.Stop()
 
 	for {
 		w, h := t.Size()
 		t.Draw(ui.Sidebar(l, others, name, focused, w, h))
+		frames := anim.C
+		if !ui.Animated(l.All) {
+			frames = nil
+		}
 		select {
+		case <-frames:
+			ui.Pulse++
 		case k, ok := <-keys:
 			if !ok {
 				return nil

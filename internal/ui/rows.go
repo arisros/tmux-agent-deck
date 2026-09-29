@@ -76,12 +76,40 @@ func name(p tmux.Pane) string {
 // Style is the glyph and color of a state.
 type Style struct{ Glyph, Color string }
 
-// Styles per state, matching the tmux formats set by tmux-init.
+// Styles per state, matching the tmux formats set by tmux-init. Waiting is a
+// red badge because it is the one state that needs a decision; running is
+// green and pulses in the views (see Pulse).
 var Styles = map[string]Style{
-	machine.Waiting: {"◆", "\x1b[1;31m"},
-	machine.Done:    {"✔", "\x1b[1;32m"},
-	machine.Running: {"●", "\x1b[33m"},
+	machine.Waiting: {"◆", "\x1b[1;97;41m"},
+	machine.Done:    {"✔", "\x1b[1;34m"},
+	machine.Running: {"●", "\x1b[1;92m"},
 	machine.Idle:    {"○", "\x1b[90m"},
+}
+
+// pulse cycles a running agent's dot from bright to dim and back.
+var pulse = []string{"\x1b[1;92m", "\x1b[32m", "\x1b[2;32m", "\x1b[32m"}
+
+// Pulse is the animation frame the views draw with; they advance it only
+// while a running agent is on screen.
+var Pulse int
+
+// StyleOf is a state's style at the current animation frame.
+func StyleOf(state string) Style {
+	st := Styles[state]
+	if state == machine.Running {
+		st.Color = pulse[Pulse%len(pulse)]
+	}
+	return st
+}
+
+// Animated reports whether rows need the pulse to keep moving.
+func Animated(rows []Row) bool {
+	for _, r := range rows {
+		if r.State == machine.Running {
+			return true
+		}
+	}
+	return false
 }
 
 const reset = "\x1b[0m"
@@ -115,7 +143,7 @@ func Summary(c map[string]int, color bool) string {
 		if c[s] == 0 {
 			continue
 		}
-		st := Styles[s]
+		st := StyleOf(s)
 		if color {
 			parts = append(parts, fmt.Sprintf("%s%s%s %d %s", st.Color, st.Glyph, reset, c[s], s))
 		} else {

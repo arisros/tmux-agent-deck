@@ -165,10 +165,10 @@ func Popup(l *List, w, h int) []string {
 	}
 	for i := start; i < len(rows) && i < start+body; i++ {
 		r := rows[i]
-		st := Styles[r.State]
+		st := StyleOf(r.State)
 		line := fmt.Sprintf("%s%s%s%s %s %s %s %s %s",
 			l.marker(r), st.Color, st.Glyph, reset,
-			Fit(r.State, 8), Fit(Age(r.Age), 4), Fit(r.Target(), 20), Fit(r.Name, nameW),
+			stateLabel(r.State), Fit(Age(r.Age), 4), Fit(r.Target(), 20), Fit(r.Name, nameW),
 			dim+Fit(filepath.Base(r.Path), 18)+reset)
 		switch {
 		case i == l.Cursor:
@@ -201,7 +201,7 @@ func Sidebar(l *List, others []Row, session string, focused bool, w, h int) []st
 		if len(lines)+2 > h-3 {
 			break
 		}
-		st := Styles[r.State]
+		st := StyleOf(r.State)
 		head := l.marker(r) + st.Color + st.Glyph + reset + " " + Fit(r.Name, w-3)
 		sub := l.marker(r) + dim + "  " + Fit(r.Window+"."+r.Index+" · "+filepath.Base(r.Path)+" · "+Age(r.Age), w-3) + reset
 		switch {
@@ -255,4 +255,12 @@ func stripReset(s string) string {
 		s = strings.ReplaceAll(s, st.Color, "")
 	}
 	return strings.ReplaceAll(s, dim, "")
+}
+
+// stateLabel is the state column; a waiting agent's label shouts.
+func stateLabel(state string) string {
+	if state == "waiting" {
+		return "\x1b[1;31m" + Fit(state, 8) + reset
+	}
+	return Fit(state, 8)
 }

@@ -18,12 +18,26 @@ import (
 //	pane-border-format:   ... #{E:@deck_pane_icon}
 //
 // tmux evaluates them itself on redraw, so showing state costs no process.
+// Glyphs match the views: a red badge for waiting (the one state that needs
+// a decision), a green dot for running that blinks where the terminal
+// supports it, blue for done, grey for idle. Blinking is a terminal
+// attribute, so tmux never has to redraw to animate it.
 const (
-	paneIconFormat = `#{?#{E:@deck_is_claude},#{?#{==:#{@deck_state},waiting}, #[fg=red#,bold]◆#[default],#{?#{==:#{@deck_state},done}, #[fg=green#,bold]✔#[default],#{?#{==:#{@deck_state},running}, #[fg=yellow]●#[default],#{?#{==:#{@deck_state},idle}, #[fg=colour244]○#[default],}}}},}`
+	waitingIcon = ` #[fg=brightwhite#,bg=red#,bold] ◆ #[default]`
+	doneIcon    = ` #[fg=blue#,bold]✔#[default]`
+	runningIcon = ` #[fg=brightgreen#,bold#,blink]●#[default]`
+	idleIcon    = ` #[fg=colour244]○#[default]`
+
+	paneIconFormat = `#{?#{E:@deck_is_claude},#{?#{==:#{@deck_state},waiting},` + waitingIcon +
+		`,#{?#{==:#{@deck_state},done},` + doneIcon +
+		`,#{?#{==:#{@deck_state},running},` + runningIcon +
+		`,#{?#{==:#{@deck_state},idle},` + idleIcon + `,}}}},}`
 
 	// Every pane of the window contributes its state; the most urgent wins.
 	windowStates     = `#{P:#{?#{E:@deck_is_claude},#{@deck_state},} }`
-	windowIconFormat = `#{?#{m:*waiting*,` + windowStates + `}, #[fg=red#,bold]◆#[default],#{?#{m:*done*,` + windowStates + `}, #[fg=green#,bold]✔#[default],#{?#{m:*running*,` + windowStates + `}, #[fg=yellow]●#[default],}}}`
+	windowIconFormat = `#{?#{m:*waiting*,` + windowStates + `},` + waitingIcon +
+		`,#{?#{m:*done*,` + windowStates + `},` + doneIcon +
+		`,#{?#{m:*running*,` + windowStates + `},` + runningIcon + `,}}}`
 )
 
 // hookIndex keeps the deck's tmux hooks in their own array slots, so a

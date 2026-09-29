@@ -177,3 +177,22 @@ func TestCurrentPaneIsMarked(t *testing.T) {
 		}
 	}
 }
+
+func TestRunningPulsesOthersDoNot(t *testing.T) {
+	defer func() { Pulse = 0 }()
+	seen := map[string]bool{}
+	for Pulse = 0; Pulse < 4; Pulse++ {
+		seen[StyleOf("running").Color] = true
+		if StyleOf("waiting") != Styles["waiting"] {
+			t.Error("waiting must not animate")
+		}
+	}
+	if len(seen) < 3 {
+		t.Errorf("running pulse has %d distinct frames", len(seen))
+	}
+	idle := Agents([]tmux.Pane{pane("%1", "a", "1", "idle", "2.1.284", "✳ x", 0)}, now)
+	busy := Agents([]tmux.Pane{pane("%1", "a", "1", "running", "2.1.284", "✳ x", 0)}, now)
+	if Animated(idle) || !Animated(busy) {
+		t.Error("animation must run only while an agent is running")
+	}
+}
