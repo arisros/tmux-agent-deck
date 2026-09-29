@@ -193,6 +193,9 @@ func TestRunningPulsesOthersDoNot(t *testing.T) {
 	if len(seen) < 3 {
 		t.Errorf("running pulse has %d distinct frames", len(seen))
 	}
+	if seen[Styles["idle"].Glyph] {
+		t.Error("a running frame uses idle's glyph")
+	}
 	idle := Agents([]tmux.Pane{pane("%1", "a", "1", "idle", "2.1.284", "✳ x", 0)}, now)
 	busy := Agents([]tmux.Pane{pane("%1", "a", "1", "running", "2.1.284", "✳ x", 0)}, now)
 	if Animated(idle) || !Animated(busy) {
@@ -291,8 +294,8 @@ func TestUsageColumnsFit(t *testing.T) {
 	}
 	side := strings.Join(Sidebar(l, nil, "a", false, 34, 14), "\n")
 	plain := regexp.MustCompile(`\x1b\[[0-9;]*m`).ReplaceAllString(side, "")
-	if !strings.Contains(plain, "5h ▰▰▰▰▰▰▰▱  85% ↻") || !strings.Contains(plain, "ctx ▰▰▱▱▱ 42%") ||
-		!strings.Contains(plain, "  1.0 · ctx") || !strings.Contains(plain, "other sessions: none") {
+	if !strings.Contains(plain, "5h ▰▰▰▰▰▰▰▱  85% ↻") || !strings.Contains(plain, "1.0 · ▰▰▱▱▱ 42%") ||
+		strings.Contains(plain, "ctx") || !strings.Contains(plain, "other sessions: none") {
 		t.Errorf("sidebar lacks plan or context:\n%s", side)
 	}
 }

@@ -117,7 +117,7 @@ var Styles = map[string]Style{
 var pulse = []Style{
 	{"●", "\x1b[1;92m"},
 	{"◉", "\x1b[92m"},
-	{"○", "\x1b[32m"},
+	{"◎", "\x1b[32m"}, // not ○, which is idle's glyph
 	{"◉", "\x1b[92m"},
 }
 

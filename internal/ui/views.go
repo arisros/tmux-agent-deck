@@ -240,7 +240,7 @@ func Sidebar(l *List, others []Row, session string, focused bool, w, h int) []st
 		head := l.marker(r) + st.Color + st.Glyph + reset + " " + Fit(r.Name, w-3)
 		detail := r.Window + "." + r.Index + " · " + Age(r.Age) + " · " + filepath.Base(r.Path)
 		if r.Usage != nil && r.Usage.ContextUsed != nil {
-			detail = r.Window + "." + r.Index + " · ctx " + Bar(*r.Usage.ContextUsed, 5) + dim +
+			detail = r.Window + "." + r.Index + " · " + Bar(*r.Usage.ContextUsed, 5) + dim +
 				fmt.Sprintf(" %.0f%%", *r.Usage.ContextUsed) + " · " + Age(r.Age)
 		}
 		sub := l.marker(r) + dim + "  " + Fit(detail, w-3) + reset
