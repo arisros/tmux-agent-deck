@@ -27,6 +27,10 @@ import (
 // silent Esc or denial never shows as running.
 const staleAfter = 2 * time.Second
 
+// minSidebarWidth is the narrowest sidebar still readable; below it the
+// sidebar restores @deck-sidebar-width.
+const minSidebarWidth = 20
+
 // agents lists panes once, repairs stale busy agents, and lists again only
 // when a repair may have changed something.
 func agents(d *deck.Deck, c tmux.Client, repair bool) ([]tmux.Pane, []ui.Row, *usage.Limits, error) {
@@ -78,6 +82,22 @@ func runPopup(args []string) (err error) {
 	d, c, err := newDeck()
 	if err != nil {
 		return err
+	}
+	if *client == "" || *current == "" {
+		// The binding passes nothing: tmux sometimes hands a popup its shell
+		// command without expanding formats, and a bare "#{...}" then starts
+		// a shell comment that swallows the rest of the line. From inside the
+		// popup, tmux resolves the client that opened it.
+		if out, err := c.Run("display-message", "-p", "#{client_name}\t#{pane_id}"); err == nil {
+			if f := strings.SplitN(strings.TrimSpace(out), "\t", 2); len(f) == 2 {
+				if *client == "" {
+					*client = f[0]
+				}
+				if *current == "" {
+					*current = f[1]
+				}
+			}
+		}
 	}
 	_, rows, limits, err := agents(d, c, true)
 	if err != nil {
@@ -331,6 +351,12 @@ func sidebarRun(c tmux.Client, session string) (err error) {
 
 	for {
 		w, h := t.Size()
+		if w < minSidebarWidth && self != "" {
+			// tmux does not protect a pane's width when neighbours are split,
+			// joined or resized; a squeezed sidebar only shows fragments.
+			_, _ = c.Run("resize-pane", "-t", self, "-x", sidebarWidth(c))
+			w, h = t.Size()
+		}
 		t.Draw(ui.Sidebar(l, others, name, focused, w, h))
 		frames := anim.C
 		if !ui.Animated(l.All) {
@@ -474,6 +500,6 @@ func logFailure(view string, err *error) {
 		*err = fmt.Errorf("panic: %v\n%s", r, debug.Stack())
 	}
 	if *err != nil {
-		logView(view+": error: "+(*err).Error(), nil)
+		logView(fmt.Sprintf("%s: error: %v args=%q", view, *err, os.Args), nil)
 	}
 }

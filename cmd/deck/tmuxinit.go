@@ -109,7 +109,7 @@ func runTmuxInit(_ []string) error {
 		[]string{"set-option", "-g", "@deck_pane_icon", paneIconFormat(running)},
 		[]string{"set-option", "-g", "@deck_window_icon", windowIconFormat(running)},
 		[]string{"bind-key", values["@deck-popup-key"], "display-popup", "-E", "-w", "90%", "-h", "70%", "-b", "rounded",
-			"-T", " agents ", bin + " popup --client #{q:client_name} --pane #{pane_id}"},
+			"-T", " agents ", bin + " popup"},
 		[]string{"bind-key", values["@deck-sidebar-key"], "run-shell", "-b",
 			bin + " sidebar toggle --session #{q:session_id} --window #{q:window_id}"},
 	)

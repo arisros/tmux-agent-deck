@@ -261,3 +261,19 @@ func TestStatusLineFeedsTheViews(t *testing.T) {
 		t.Errorf("garbage input printed %q", out)
 	}
 }
+
+// A sidebar squeezed by layout changes restores its width.
+func TestSidebarRestoresASqueezedWidth(t *testing.T) {
+	h := newHarness(t)
+	sess, w1 := h.opt("alpha", "session_id"), h.opt("alpha", "window_id")
+	h.deck("", "sidebar", "toggle", "--session", sess, "--window", w1)
+	sb := h.tmux("show-options", "-qv", "-t", "alpha", "@deck_sidebar_pane")
+	h.eventually(func() bool { return h.opt(sb, "pane_width") == "34" }, "sidebar at 34 columns")
+	h.tmux("resize-pane", "-t", sb, "-x", "8")
+	h.eventually(func() bool { return h.opt(sb, "pane_width") == "34" }, "sidebar to restore its width")
+	h.tmux("resize-pane", "-t", sb, "-x", "40")
+	time.Sleep(300 * time.Millisecond)
+	if got := h.opt(sb, "pane_width"); got != "40" {
+		t.Errorf("a deliberate resize to 40 was undone: %s", got)
+	}
+}

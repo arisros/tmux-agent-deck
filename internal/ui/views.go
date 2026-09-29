@@ -184,7 +184,7 @@ func Popup(l *List, w, h int) []string {
 	lines = append(lines, dim+strings.Repeat("─", w)+reset)
 	// " ◆ " + state + age + target + name + ctx + tokens + cost + folder,
 	// one space between columns.
-	nameW := w - 3 - (8 + 1) - (4 + 1) - (20 + 1) - 1 - (5 + 1) - (7 + 1) - (7 + 1) - 14
+	nameW := w - 3 - (8 + 1) - (4 + 1) - (20 + 1) - 1 - (10 + 1) - (7 + 1) - (7 + 1) - 14
 	if nameW < 8 {
 		nameW = 8
 	}
@@ -228,11 +228,8 @@ func Sidebar(l *List, others []Row, session string, focused bool, w, h int) []st
 	}
 	rows := l.Visible()
 	cur := l.clamp(len(rows))
-	plan := Plan(l.Limits, l.now(), false)
-	body := h - 2 - 3 // header above, summary and help below
-	if plan != "" {
-		body--
-	}
+	plan := PlanLines(l.Limits, l.now(), w-1)
+	body := h - 2 - 3 - len(plan) // header above; plan, other sessions and help below
 	first, last := l.window(rows, cur, focused, body)
 	if first > 0 {
 		lines = append(lines, dim+Fit(fmt.Sprintf("  ↑ %d more", first), w)+reset)
@@ -241,9 +238,11 @@ func Sidebar(l *List, others []Row, session string, focused bool, w, h int) []st
 		r := rows[i]
 		st := StyleOf(r.State)
 		head := l.marker(r) + st.Color + st.Glyph + reset + " " + Fit(r.Name, w-3)
-		detail := r.Window + "." + r.Index + " · " + filepath.Base(r.Path) + " · " + Age(r.Age)
+		// "win 7.2": tmux window 7, pane 2 of this session.
+		detail := "win " + r.Window + "." + r.Index + " · " + Age(r.Age) + " · " + filepath.Base(r.Path)
 		if r.Usage != nil && r.Usage.ContextUsed != nil {
-			detail = r.Window + "." + r.Index + " · ctx " + fmt.Sprintf("%.0f%%", *r.Usage.ContextUsed) + " · " + Age(r.Age) + " · " + filepath.Base(r.Path)
+			detail = "win " + r.Window + "." + r.Index + " · ctx " + Bar(*r.Usage.ContextUsed, 5) + dim +
+				fmt.Sprintf(" %.0f%%", *r.Usage.ContextUsed) + " · " + Age(r.Age)
 		}
 		sub := l.marker(r) + dim + "  " + Fit(detail, w-3) + reset
 		switch {
@@ -261,20 +260,17 @@ func Sidebar(l *List, others []Row, session string, focused bool, w, h int) []st
 	if len(rows) == 0 {
 		lines = append(lines, dim+" no agents here"+reset)
 	}
-	tailLines := 3
-	if plan != "" {
-		tailLines = 4
-	}
-	for len(lines) < h-tailLines {
+	for len(lines) < h-3-len(plan) {
 		lines = append(lines, "")
 	}
 	lines = append(lines, dim+strings.Repeat("─", w)+reset)
-	if plan != "" {
-		lines = append(lines, " "+Fit("plan "+plan, w-1))
+	for _, p := range plan {
+		lines = append(lines, " "+Fit(p, w-1))
 	}
-	other := "other: " + Summary(Counts(others), false)
+	// Agents in the other tmux sessions, which this per-session list omits.
+	other := "other sessions: " + Summary(Counts(others), true)
 	if len(others) == 0 {
-		other = "other: none"
+		other = "other sessions: none"
 	}
 	lines = append(lines, " "+Fit(other, w-1))
 	help := "j/k · enter · x kill · q"

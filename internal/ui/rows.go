@@ -312,15 +312,41 @@ func resetsAt(t, now time.Time) string {
 	return t.Local().Format("Mon 15:04")
 }
 
-// UsageCols is the popup's context, token, and cost columns for a row.
+// UsageCols is the popup's context (a bar), token, and cost columns.
 func UsageCols(r Row) string {
 	if r.Usage == nil {
-		return "\x1b[90m" + Fit("  –", 5) + " " + Fit("", 7) + " " + Fit("", 7) + reset
+		return "\x1b[90m" + Fit("     –", 10) + " " + Fit("", 7) + " " + Fit("", 7) + reset
 	}
-	ctx := "  –"
+	ctx := "\x1b[90m" + Fit("     –", 10) + reset
 	if r.Usage.ContextUsed != nil {
-		ctx = fmt.Sprintf("%3.0f%%", *r.Usage.ContextUsed)
+		ctx = Bar(*r.Usage.ContextUsed, 5) + " " + Fit(fmt.Sprintf("%3.0f%%", *r.Usage.ContextUsed), 4)
 	}
-	return Fit(ctx, 5) + " " + Fit(usage.Tokens(r.Usage.InputTokens+r.Usage.OutputTokens), 7) + " " +
+	return ctx + " " + Fit(usage.Tokens(r.Usage.InputTokens+r.Usage.OutputTokens), 7) + " " +
 		Fit(fmt.Sprintf("$%.2f", r.Usage.CostUSD), 7)
+}
+
+// PlanLines is the sidebar's plan block: one bar per rate-limit window, with
+// the time it resets, fitted to width.
+func PlanLines(l *usage.Limits, now time.Time, width int) []string {
+	if l == nil {
+		return nil
+	}
+	var out []string
+	for _, p := range []struct {
+		name string
+		w    *usage.Window
+	}{{"5h", l.FiveHour}, {"7d", l.SevenDay}} {
+		if p.w == nil {
+			continue
+		}
+		line := fmt.Sprintf("%s %s %3.0f%%", p.name, Bar(p.w.UsedPercentage, 8), p.w.UsedPercentage)
+		if !p.w.ResetsAt.IsZero() {
+			line += "\x1b[90m ↻" + resetsAt(p.w.ResetsAt.Time, now) + reset
+		}
+		out = append(out, Fit(line, width))
+	}
+	if len(out) > 0 && now.Sub(time.Unix(l.UpdatedAtUnix, 0)) > 10*time.Minute {
+		out[len(out)-1] = Fit(strings.TrimRight(out[len(out)-1], " ")+"\x1b[90m ("+Age(now.Sub(time.Unix(l.UpdatedAtUnix, 0)))+" ago)"+reset, width)
+	}
+	return out
 }
