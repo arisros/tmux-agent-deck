@@ -143,3 +143,30 @@ func TestPopupListsAndJumps(t *testing.T) {
 	h.tmux("send-keys", "-t", popup, "Enter")
 	h.eventually(func() bool { return h.opt("alpha", "pane_id") == a }, "jump to the agent")
 }
+
+// A sticky pane (dotfiles' sticky-pane.sh) and the sidebar both join the left
+// edge when the window changes. The sticky hook sits in slot 0 and runs
+// first; the sidebar's follow runs after it and must end up leftmost, with the
+// sticky pane still in the window.
+func TestSidebarCoexistsWithStickyPane(t *testing.T) {
+	h := newHarness(t)
+	a := h.agent("alpha")
+	h.hook(a, "UserPromptSubmit", "")
+	sess, w1 := h.opt("alpha", "session_id"), h.opt("alpha", "window_id")
+	sticky := h.tmux("split-window", "-d", "-t", w1, "-P", "-F", "#{pane_id}", "sleep 100000")
+	h.tmux("set-hook", "-g", "session-window-changed[0]",
+		`run-shell "tmux -L `+h.socket+` join-pane -d -f -h -b -l 20 -s `+sticky+` -t #{window_id}"`)
+
+	h.deck("", "sidebar", "toggle", "--session", sess, "--window", w1)
+	sb := h.tmux("show-options", "-qv", "-t", "alpha", "@deck_sidebar_pane")
+	w2 := h.tmux("new-window", "-d", "-t", "alpha", "-P", "-F", "#{window_id}", "sleep 100000")
+	h.tmux("select-window", "-t", w2)
+
+	h.eventually(func() bool {
+		return h.opt(sb, "window_id") == w2 && h.opt(sticky, "window_id") == w2
+	}, "sidebar and sticky pane to follow")
+	h.eventually(func() bool { return h.opt(sb, "pane_at_left") == "1" }, "sidebar leftmost")
+	if h.opt(sticky, "pane_at_left") == "1" {
+		t.Error("sticky pane took the left edge from the sidebar")
+	}
+}
