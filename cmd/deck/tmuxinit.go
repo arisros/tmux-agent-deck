@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -26,19 +27,27 @@ const (
 	waitingIcon = ` #[fg=brightwhite#,bg=red#,bold] ◆ #[default]`
 	doneIcon    = ` #[fg=blue#,bold]✔#[default]`
 	runningIcon = ` #[fg=brightgreen#,bold#,blink]●#[default]`
-	idleIcon    = ` #[fg=colour244]○#[default]`
-
-	paneIconFormat = `#{?#{E:@deck_is_claude},#{?#{==:#{@deck_state},waiting},` + waitingIcon +
-		`,#{?#{==:#{@deck_state},done},` + doneIcon +
-		`,#{?#{==:#{@deck_state},running},` + runningIcon +
-		`,#{?#{==:#{@deck_state},idle},` + idleIcon + `,}}}},}`
+	// With @deck-tab-pulse on, the dot comes from `deck tick`, which the
+	// status line re-runs every second, since tmux formats have no clock.
+	runningPulseIcon = ` #[fg=brightgreen#,bold]#(%s tick)#[default]`
+	idleIcon         = ` #[fg=colour244]○#[default]`
 
 	// Every pane of the window contributes its state; the most urgent wins.
-	windowStates     = `#{P:#{?#{E:@deck_is_claude},#{@deck_state},} }`
-	windowIconFormat = `#{?#{m:*waiting*,` + windowStates + `},` + waitingIcon +
-		`,#{?#{m:*done*,` + windowStates + `},` + doneIcon +
-		`,#{?#{m:*running*,` + windowStates + `},` + runningIcon + `,}}}`
+	windowStates = `#{P:#{?#{E:@deck_is_claude},#{@deck_state},} }`
 )
+
+func paneIconFormat(running string) string {
+	return `#{?#{E:@deck_is_claude},#{?#{==:#{@deck_state},waiting},` + waitingIcon +
+		`,#{?#{==:#{@deck_state},done},` + doneIcon +
+		`,#{?#{==:#{@deck_state},running},` + running +
+		`,#{?#{==:#{@deck_state},idle},` + idleIcon + `,}}}},}`
+}
+
+func windowIconFormat(running string) string {
+	return `#{?#{m:*waiting*,` + windowStates + `},` + waitingIcon +
+		`,#{?#{m:*done*,` + windowStates + `},` + doneIcon +
+		`,#{?#{m:*running*,` + windowStates + `},` + running + `,}}}`
+}
 
 // hookIndex keeps the deck's tmux hooks in their own array slots, so a
 // user's plain `set-hook -g name` (slot 0) and re-runs of this command never
@@ -51,6 +60,7 @@ func defaults() map[string]string {
 		"@deck-sidebar-key":   "e",
 		"@deck-sidebar-width": "34",
 		"@deck-sound":         "on",
+		"@deck-tab-pulse":     "off",
 	}
 	if runtime.GOOS == "darwin" {
 		d["@deck-sound-command"] = "afplay"
@@ -88,10 +98,16 @@ func runTmuxInit(_ []string) error {
 		}
 		values[name] = v
 	}
+	running := runningIcon
+	if values["@deck-tab-pulse"] == "on" {
+		running = fmt.Sprintf(runningPulseIcon, bin)
+		// A second-by-second pulse needs a second-by-second redraw.
+		cmds = append(cmds, []string{"set-option", "-g", "status-interval", "1"})
+	}
 	cmds = append(cmds,
 		[]string{"set-option", "-g", "@deck_is_claude", tmux.IsClaudeFormat},
-		[]string{"set-option", "-g", "@deck_pane_icon", paneIconFormat},
-		[]string{"set-option", "-g", "@deck_window_icon", windowIconFormat},
+		[]string{"set-option", "-g", "@deck_pane_icon", paneIconFormat(running)},
+		[]string{"set-option", "-g", "@deck_window_icon", windowIconFormat(running)},
 		[]string{"bind-key", values["@deck-popup-key"], "display-popup", "-E", "-w", "90%", "-h", "70%", "-b", "rounded",
 			"-T", " agents ", bin + " popup --client #{q:client_name} --pane #{pane_id}"},
 		[]string{"bind-key", values["@deck-sidebar-key"], "run-shell", "-b",

@@ -86,8 +86,15 @@ var Styles = map[string]Style{
 	machine.Idle:    {"○", "\x1b[90m"},
 }
 
-// pulse cycles a running agent's dot from bright to dim and back.
-var pulse = []string{"\x1b[1;92m", "\x1b[32m", "\x1b[2;32m", "\x1b[32m"}
+// pulse cycles a running agent's dot from full to hollow and back. The glyph
+// changes, not only its shade: a dim-green frame is too close to green to
+// read as movement on most terminals.
+var pulse = []Style{
+	{"●", "\x1b[1;92m"},
+	{"◉", "\x1b[92m"},
+	{"○", "\x1b[32m"},
+	{"◉", "\x1b[92m"},
+}
 
 // Pulse is the animation frame the views draw with; they advance it only
 // while a running agent is on screen.
@@ -95,11 +102,10 @@ var Pulse int
 
 // StyleOf is a state's style at the current animation frame.
 func StyleOf(state string) Style {
-	st := Styles[state]
 	if state == machine.Running {
-		st.Color = pulse[Pulse%len(pulse)]
+		return pulse[Pulse%len(pulse)]
 	}
-	return st
+	return Styles[state]
 }
 
 // Animated reports whether rows need the pulse to keep moving.

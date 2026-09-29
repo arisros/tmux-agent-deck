@@ -5,6 +5,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"time"
 )
 
 var version = "dev"
@@ -28,6 +29,7 @@ setup:
   uninstall --claude [--apply]         remove every deck hook from Claude settings
   doctor                               check the installation
   describe                             print the state machine as Mermaid
+  tick                                 print the tab pulse frame (used by @deck-tab-pulse)
   version
 `
 
@@ -60,6 +62,13 @@ func main() {
 		err = runDoctor(args)
 	case "describe":
 		err = runDescribe()
+	case "tick":
+		// The tab pulse: tmux re-runs this every second while an agent runs.
+		if time.Now().Unix()%2 == 0 {
+			fmt.Print("●")
+		} else {
+			fmt.Print("○")
+		}
 	case "version":
 		fmt.Println(version)
 	default:

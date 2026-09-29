@@ -11,7 +11,7 @@ See which Claude Code agents need you, which have finished, and which are still 
 | done | ✔ blue | the turn finished while you were elsewhere; it clears when you look at the pane |
 | idle | ○ grey | at its prompt, and you have seen it |
 
-The running dot pulses in the popup and sidebar while they are open. In tabs and borders it uses the terminal's blink attribute, so it pulses where the terminal supports blinking text and is a steady green dot elsewhere; tmux never redraws to animate it.
+The running dot pulses in the popup and sidebar while they are open. In tabs and borders it asks the terminal to blink, which costs nothing but only works where the terminal renders blinking text (Ghostty does not). For a pulse everywhere, set `@deck-tab-pulse on`: the status line then re-runs `deck tick` once a second while an agent is running, and `status-interval` is set to 1.
 
 ## How it works
 
@@ -80,6 +80,7 @@ Set these before tpm loads the plugin.
 | `@deck-popup-key` | `a` | popup key (prefix table) |
 | `@deck-sidebar-key` | `e` | sidebar toggle key |
 | `@deck-sidebar-width` | `34` | sidebar width in columns |
+| `@deck-tab-pulse` | `off` | pulse the running dot in tabs and borders on any terminal: one `deck tick` per second while an agent runs, and `status-interval 1` |
 | `@deck-sound` | `on` | play a sound when an agent starts waiting or finishes, unless you are watching that pane |
 | `@deck-sound-command` | `afplay` (macOS), `paplay` (Linux) | player |
 | `@deck-sound-waiting` | Ping.aiff / bell.oga | |
@@ -89,7 +90,7 @@ If your Claude settings already play sounds or color tabs from hooks, remove tho
 
 ## Performance
 
-Measured by `go test ./test/integration -run Performance` on a private tmux server with 11 sessions, 64 windows, 120 panes and 9 agents (Apple M4, busy laptop):
+Measured by `make perf` on a private tmux server with 11 sessions, 64 windows, 120 panes and 9 agents (Apple M4, busy laptop):
 
 | Path | p50 | p95 |
 |---|---|---|
@@ -111,7 +112,8 @@ Then remove the `@plugin` line. If you remove the plugin first, the hooks become
 ## Development
 
 ```sh
-make test    # unit tests, fixture replay, integration and performance on private tmux servers
+make test    # unit tests, fixture replay, integration on private tmux servers
+make perf    # the 120-pane performance test, run alone
 make lint
 make build   # bin/deck
 ```

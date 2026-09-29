@@ -28,8 +28,10 @@ func percentile(d []time.Duration, p float64) time.Duration {
 // TestPerformanceAtScale loads a server the size of a real working day, the
 // one that broke other plugins: 11 sessions, 64 windows, 120 panes, 9 agents.
 func TestPerformanceAtScale(t *testing.T) {
-	if testing.Short() {
-		t.Skip("slow")
+	// Timing only means something without other test packages competing for
+	// the CPU, so it runs on its own: make perf, or DECK_PERF=1.
+	if os.Getenv("DECK_PERF") != "1" {
+		t.Skip("set DECK_PERF=1 (make perf) to run the performance test on its own")
 	}
 	h := newHarness(t)
 

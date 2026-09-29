@@ -182,7 +182,7 @@ func TestRunningPulsesOthersDoNot(t *testing.T) {
 	defer func() { Pulse = 0 }()
 	seen := map[string]bool{}
 	for Pulse = 0; Pulse < 4; Pulse++ {
-		seen[StyleOf("running").Color] = true
+		seen[StyleOf("running").Glyph] = true
 		if StyleOf("waiting") != Styles["waiting"] {
 			t.Error("waiting must not animate")
 		}

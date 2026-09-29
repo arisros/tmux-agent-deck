@@ -29,8 +29,10 @@ jobs:
           if [ "$RUNNER_OS" = macOS ]; then brew install tmux; else sudo apt-get update && sudo apt-get install -y tmux; fi
           tmux -V
       - run: go vet ./...
-      - name: test (unit, integration on a private tmux server, performance at scale)
+      - name: test (unit, fixture replay, integration on private tmux servers)
         run: go test -race ./...
+      - name: performance at scale (alone, 120 panes)
+        run: make perf
         env:
           # Shared runners are slower and noisier than a laptop; the local
           # budgets in test/integration/perf_test.go are the real targets.
