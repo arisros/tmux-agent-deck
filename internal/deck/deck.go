@@ -251,9 +251,11 @@ func clear(pane string) [][]string {
 // Classify reads Claude Code's footer. It answers "" when unsure, and callers
 // then leave the state alone: a stale state beats a wrong one.
 //
-// Idle needs two signs: an idle footer and an empty input line. While the
-// user types into a busy session, Claude hides "esc to interrupt", so the
-// footer alone would misread a working agent as idle.
+// Idle needs an idle footer that is complete and an empty input line. While
+// the user types into a busy session, Claude hides "esc to interrupt"; in a
+// narrow pane it cuts the footer off with "…", possibly before "esc to";
+// and a panel of background agents can sit under the footer of an idle
+// prompt while work goes on.
 func Classify(screen string) string {
 	lines := strings.Split(strings.TrimRight(screen, "\n "), "\n")
 	var tail []string
@@ -270,12 +272,30 @@ func Classify(screen string) string {
 		}
 		return false
 	}
+	footer, below := "", tail
+	for i, l := range tail {
+		if i >= 8 {
+			break
+		}
+		if idleFooter(l) {
+			footer, below = l, tail[:i]
+			break
+		}
+	}
+	busyBelow := false
+	for _, l := range below {
+		if strings.Contains(l, "tokens") {
+			busyBelow = true
+		}
+	}
 	switch {
 	case has("Do you want to proceed?"), has("Enter to select"), has("Esc to cancel"):
 		return machine.ScreenDialog
-	case has("esc to interrupt"), has("queued messages"):
+	case has("esc to interrupt"), has("queued messages"), strings.Contains(footer, "esc to"), busyBelow:
 		return machine.ScreenWorking
-	case len(tail) > 0 && idleFooter(tail[0]) && emptyInput(tail):
+	case footer == "", strings.HasSuffix(strings.TrimSpace(footer), "…"):
+		return ""
+	case emptyInput(tail):
 		return machine.ScreenIdle
 	}
 	return ""

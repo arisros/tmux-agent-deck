@@ -27,7 +27,7 @@ const staleAfter = 2 * time.Second
 
 // agents lists panes once, repairs stale busy agents, and lists again only
 // when a repair may have changed something.
-func agents(d *deck.Deck, c tmux.Client) ([]tmux.Pane, []ui.Row, error) {
+func agents(d *deck.Deck, c tmux.Client, repair bool) ([]tmux.Pane, []ui.Row, error) {
 	panes, err := c.ListPanes()
 	if err != nil {
 		return nil, nil, err
@@ -38,6 +38,9 @@ func agents(d *deck.Deck, c tmux.Client) ([]tmux.Pane, []ui.Row, error) {
 		}
 	}
 	now := time.Now()
+	if !repair {
+		return panes, ui.Agents(panes, now), nil
+	}
 	var stale []tmux.Pane
 	for _, r := range ui.Agents(panes, now) {
 		if (r.State == "running" || r.State == "waiting") && r.Age >= staleAfter {
@@ -64,7 +67,7 @@ func runPopup(args []string) error {
 	if err != nil {
 		return err
 	}
-	_, rows, err := agents(d, c)
+	_, rows, err := agents(d, c, true)
 	if err != nil {
 		return err
 	}
@@ -109,20 +112,20 @@ func runPopup(args []string) error {
 			case ui.Kill:
 				if r, ok := l.Selected(); ok {
 					_, _ = c.Run("kill-pane", "-t", r.ID)
-					refresh(d, c, l)
+					refresh(d, c, l, false)
 				}
 			}
 		case <-changed:
-			refresh(d, c, l)
+			refresh(d, c, l, false)
 		case <-tick.C:
-			refresh(d, c, l)
+			refresh(d, c, l, true)
 		}
 	}
 }
 
-func refresh(d *deck.Deck, c tmux.Client, l *ui.List) {
+func refresh(d *deck.Deck, c tmux.Client, l *ui.List, repair bool) {
 	sel, had := l.Selected()
-	_, rows, err := agents(d, c)
+	_, rows, err := agents(d, c, repair)
 	if err != nil {
 		return
 	}
@@ -222,6 +225,7 @@ func sidebarToggle(c tmux.Client, session, window string) error {
 		{"set-option", "-p", "-t", p, "@deck_sidebar", "1"},
 		{"select-pane", "-t", p, "-T", "agents"},
 		{"set-option", "-t", session, "@deck_sidebar_pane", p},
+		{"set-option", "-t", session, "@deck_sidebar_window", window},
 	})
 }
 
@@ -234,8 +238,10 @@ func sidebarFollow(c tmux.Client, session, window string) error {
 	if err != nil || strings.TrimSpace(out) == window {
 		return err
 	}
-	_, err = c.Run("join-pane", "-d", "-f", "-h", "-b", "-l", sidebarWidth(c), "-s", p, "-t", window)
-	return err
+	return c.Batch([][]string{
+		{"join-pane", "-d", "-f", "-h", "-b", "-l", sidebarWidth(c), "-s", p, "-t", window},
+		{"set-option", "-t", session, "@deck_sidebar_window", window},
+	})
 }
 
 func sidebarRun(c tmux.Client, session string) error {
@@ -261,8 +267,10 @@ func sidebarRun(c tmux.Client, session string) error {
 		return mine
 	}
 	alone := false
-	load := func() {
-		panes, rows, err := agents(d, c)
+	// A wake-up only re-lists panes; reading busy agents' screens to repair
+	// silent endings is the slow part, left to the periodic tick.
+	load := func(repair bool) {
+		panes, rows, err := agents(d, c, repair)
 		if err != nil {
 			return
 		}
@@ -284,14 +292,19 @@ func sidebarRun(c tmux.Client, session string) error {
 			l.Keep(sel.ID)
 		}
 	}
-	load()
+	load(true)
 
 	t, err := ui.OpenTerm()
 	if err != nil {
 		return err
 	}
 	defer t.Close()
-	defer func() { _, _ = c.Run("set-option", "-u", "-t", session, "@deck_sidebar_pane") }()
+	defer func() {
+		_ = c.Batch([][]string{
+			{"set-option", "-u", "-t", session, "@deck_sidebar_pane"},
+			{"set-option", "-u", "-t", session, "@deck_sidebar_window"},
+		})
+	}()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	keys, changed := t.Keys(), ui.Watch(ctx, c.Flags(), deck.Signal)
@@ -328,15 +341,15 @@ func sidebarRun(c tmux.Client, session string) error {
 					_, _ = c.Run("kill-pane", "-t", r.ID)
 				}
 			}
-			load()
+			load(false)
 		case <-changed:
-			load()
+			load(false)
 		case <-tick.C:
-			load()
+			load(true)
 		case <-winch:
 			// Closing the last other pane resizes the sidebar to the full
 			// window: the moment it is alone.
-			load()
+			load(false)
 		}
 		if alone {
 			moved, err := leaveEmptyWindow(c, session, self)
@@ -344,7 +357,7 @@ func sidebarRun(c tmux.Client, session string) error {
 				return err // returning closes the pane, and with it the last window
 			}
 			alone = false
-			load()
+			load(false)
 		}
 	}
 }
@@ -374,8 +387,10 @@ func leaveEmptyWindow(c tmux.Client, session, self string) (bool, error) {
 	if _, err := c.Run("join-pane", "-d", "-f", "-h", "-b", "-l", sidebarWidth(c), "-s", self, "-t", target); err != nil {
 		return false, err
 	}
-	_, err = c.Run("select-window", "-t", target)
-	return true, err
+	return true, c.Batch([][]string{
+		{"set-option", "-t", session, "@deck_sidebar_window", target},
+		{"select-window", "-t", target},
+	})
 }
 
 func runList(args []string) error {
@@ -388,7 +403,7 @@ func runList(args []string) error {
 	if err != nil {
 		return err
 	}
-	_, rows, err := agents(d, c)
+	_, rows, err := agents(d, c, true)
 	if err != nil {
 		return err
 	}

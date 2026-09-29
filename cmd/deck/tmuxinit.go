@@ -123,8 +123,19 @@ func runTmuxInit(_ []string) error {
 	// Leaving a busy agent is when a silent Esc or denial just happened there.
 	cmds = append(cmds, []string{"set-hook", "-g", "pane-focus-out" + hookIndex,
 		`if-shell -F "#{||:#{==:#{@deck_state},running},#{==:#{@deck_state},waiting}}" "run-shell -b '` + bin + ` reconcile #{pane_id}'"`})
+	// The sidebar follows window switches without starting deck: tmux checks
+	// whether it must move, and one shell runs the move. A window switch is
+	// the moment the user watches the sidebar, so this path stays short.
+	// #{q:} matters: a session id is "$3", which a shell would expand.
 	cmds = append(cmds, []string{"set-hook", "-g", "session-window-changed[78]",
-		`if-shell -F "#{@deck_sidebar_pane}" "run-shell -b '` + bin + ` sidebar follow --session #{q:session_id} --window #{q:window_id}'"`})
+		`if-shell -F "#{&&:#{@deck_sidebar_pane},#{!=:#{@deck_sidebar_window},#{window_id}}}" ` +
+			`"run-shell -b 'tmux join-pane -d -f -h -b -l #{@deck-sidebar-width} -s #{@deck_sidebar_pane} -t #{window_id} ` +
+			`&& tmux set-option -t #{q:session_id} @deck_sidebar_window #{window_id}'"`})
+	// Any focus change wakes open sidebars, so the "you are here" mark moves
+	// at once. wait-for runs inside tmux: no process is started.
+	for _, h := range []string{"after-select-pane", "session-window-changed", "client-session-changed"} {
+		cmds = append(cmds, []string{"set-hook", "-g", h + "[79]", "wait-for -S " + deck.Signal})
+	}
 	if err := c.Batch(cmds); err != nil {
 		return err
 	}

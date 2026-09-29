@@ -237,6 +237,30 @@ const (
 ────────────────────────────────
   ⏵⏵ auto mode on (shift+tab to cycle) · ← 5 agents
 `
+	// A 50-column pane: Claude cuts the footer off.
+	screenNarrowIdle = `──────────────────────────────────────────────────
+❯ 
+──────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← 5 ag…
+`
+	screenNarrowWorking = `──────────────────────────────────────────────────
+❯ 
+──────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · esc to…
+`
+	screenNarrowerWorking = `────────────────────────────────────
+❯ 
+────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cyc…
+`
+	// An idle prompt with a background agent still working under it.
+	screenBackgroundAgent = `────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on · 1 shell · ← 4 agents · ↓ to manage
+  ⏺ main
+  ◯ general-purpose  Adding b… 4m 29s · ↓ 95.1k tokens
+`
 	screenQuestion = `❯ 1. Blue
   2. Red
   6. Chat about this
@@ -254,6 +278,11 @@ func TestClassify(t *testing.T) {
 		// Typing into a busy agent must not read as idle.
 		screenTypingWhileBusy: "",
 		screenQueued:          machine.ScreenWorking,
+		// Narrow panes: never read a cut-off footer as idle.
+		screenNarrowIdle:      "",
+		screenNarrowWorking:   machine.ScreenWorking,
+		screenNarrowerWorking: "",
+		screenBackgroundAgent: machine.ScreenWorking,
 		"":                    "",
 		"$ ls\nfoo\n":         "",
 	}

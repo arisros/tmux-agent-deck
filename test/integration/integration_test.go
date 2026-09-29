@@ -113,6 +113,11 @@ func TestSidebarFollowsWindows(t *testing.T) {
 	if got := h.opt(sb, "pane_at_left"); got != "1" {
 		t.Errorf("sidebar not leftmost after follow")
 	}
+	// And back again: the follow must record where the sidebar went.
+	h.tmux("select-window", "-t", w1)
+	h.eventually(func() bool { return h.opt(sb, "window_id") == w1 }, "sidebar to follow back to the first window")
+	h.tmux("select-window", "-t", w2)
+	h.eventually(func() bool { return h.opt(sb, "window_id") == w2 }, "sidebar to follow a second time")
 
 	h.deck("", "sidebar", "toggle", "--session", sess)
 	h.eventually(func() bool { return h.tmux("show-options", "-qv", "-t", "alpha", "@deck_sidebar_pane") == "" }, "sidebar closed")
