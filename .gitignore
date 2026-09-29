@@ -1,0 +1,13 @@
+/bin/
+/dist/
+*.out
+*.test
+cover.out
+
+# Raw recordings stay in ~/.local/state; only redacted fixtures belong here.
+*.raw.jsonl
+
+.DS_Store
+.idea/
+.vscode/
+*.swp

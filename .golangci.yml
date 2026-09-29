@@ -1,0 +1,71 @@
+# golangci-lint configuration for tmux-agent-deck, adapted from fate's.
+# The headline rule: every exported symbol must be documented.
+#
+# Schema v2 (golangci-lint v2.x). errcheck, govet, ineffassign, staticcheck and
+# unused are enabled by default in v2 and so are no longer listed explicitly;
+# only the additions to that set appear under `enable`.
+version: "2"
+
+linters:
+  enable:
+    - revive # exported-symbol documentation + style
+    - misspell
+    - unconvert
+
+  settings:
+    revive:
+      rules:
+        - name: exported
+          arguments:
+            - checkPrivateReceivers
+            - sayRepetitiveInsteadOfStutters
+          severity: error
+        - name: package-comments
+        - name: blank-imports
+        - name: context-as-argument
+        - name: error-return
+        - name: error-strings
+        - name: error-naming
+        - name: if-return
+        - name: increment-decrement
+        - name: var-declaration
+        - name: receiver-naming
+        - name: time-naming
+        - name: unexported-return
+        - name: indent-error-flow
+        - name: errorf
+
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      # Test files may omit doc comments.
+      - path: _test\.go
+        linters:
+          - revive
+          - unused
+    paths:
+      - third_party$
+      - builtin$
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/arisros/tmux-agent-deck
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
