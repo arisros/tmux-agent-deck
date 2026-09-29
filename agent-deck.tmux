@@ -5,6 +5,9 @@
 #   3. otherwise keep the binary that is already there
 # A failed update never turns the plugin off: tmux-init runs whenever any
 # usable binary exists.
+#
+# DECK_BUILD=off prefers the release binary even when Go is installed, and
+# DECK_RELEASE_URL points the download at a mirror of the releases.
 set -u
 
 dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
@@ -75,7 +78,7 @@ download() {
 	*) echo "no release binary for $(uname -m)" >>"$log"; return 1 ;;
 	esac
 	asset="tmux-agent-deck_${tag#v}_${os}_${arch}.tar.gz"
-	base="https://github.com/$slug/releases/download/$tag"
+	base="${DECK_RELEASE_URL:-https://github.com/$slug/releases/download}/$tag"
 	tmp=$(mktemp -d)
 	if ! fetch "$base/$asset" "$tmp/$asset" || ! fetch "$base/checksums.txt" "$tmp/checksums.txt"; then
 		rm -rf "$tmp"
@@ -97,7 +100,7 @@ download() {
 
 if [ ! -x "$bin" ] || [ "$current" != "$version" ]; then
 	: >"$log"
-	if build || download; then
+	if { [ "${DECK_BUILD:-on}" != off ] && build; } || download; then
 		echo "$version" >"$stamp"
 	elif [ -x "$bin" ]; then
 		say "update failed, still running ${current:-the old build} (see $log)"
