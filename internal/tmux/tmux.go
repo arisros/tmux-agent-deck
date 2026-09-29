@@ -18,7 +18,8 @@ const MaxBatchBytes = 8000
 
 // Client runs tmux commands against one server.
 type Client struct {
-	// Socket selects a server with -S; empty uses $TMUX or the default.
+	// Socket selects a server: a path is passed as -S, a bare name as -L.
+	// Empty uses $TMUX, which tmux sets for hooks and panes alike.
 	Socket string
 }
 
@@ -27,10 +28,18 @@ type Client struct {
 func FromEnv() Client { return Client{Socket: os.Getenv("DECK_TMUX_SOCKET")} }
 
 func (c Client) command(args ...string) *exec.Cmd {
-	if c.Socket != "" {
-		args = append([]string{"-S", c.Socket}, args...)
+	return exec.Command("tmux", append(c.Flags(), args...)...)
+}
+
+// Flags are the server-selection arguments for a tmux command line.
+func (c Client) Flags() []string {
+	switch {
+	case c.Socket == "":
+		return nil
+	case strings.Contains(c.Socket, "/"):
+		return []string{"-S", c.Socket}
 	}
-	return exec.Command("tmux", args...)
+	return []string{"-L", c.Socket}
 }
 
 // Run runs one tmux command and returns its stdout.
@@ -83,13 +92,6 @@ func Chunk(cmds [][]string, limit int) [][]string {
 	return out
 }
 
-// Visible reports whether a pane is on screen: active in the active window of
-// an attached session.
-func (c Client) Visible(pane string) (bool, error) {
-	out, err := c.Run("display-message", "-p", "-t", pane, VisibleFormat)
-	return strings.TrimSpace(out) == "1", err
-}
-
 // Capture returns the visible screen of a pane.
 func (c Client) Capture(pane string) (string, error) {
 	return c.Run("capture-pane", "-p", "-t", pane)
@@ -103,6 +105,8 @@ func (c Client) PaneOption(pane, name string) (string, error) {
 
 // Formats shared by the Go code and the tmux configuration.
 const (
+	// VisibleFormat is true when a pane is on screen: active in the active
+	// window of an attached session.
 	VisibleFormat = "#{&&:#{pane_active},#{&&:#{window_active},#{session_attached}}}"
 
 	// IsClaudeFormat matches a pane whose foreground process is Claude Code,
@@ -126,7 +130,9 @@ var paneFields = []string{
 	"#{pane_active}", "#{window_active}", "#{session_attached}",
 }
 
-const sep = "\x1f"
+// sep must survive tmux's output escaping: tmux prints control characters
+// such as \x1f as octal text ("\037"), but passes a tab through.
+const sep = "\t"
 
 // ListPanes lists every pane on the server in one call.
 func (c Client) ListPanes() ([]Pane, error) {

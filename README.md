@@ -1,52 +1,124 @@
 # tmux-agent-deck
 
-See which Claude Code agents are blocked, done, or still running across every tmux session, and jump to one.
+See which Claude Code agents need you, which have finished, and which are still working, across every tmux session. Jump to any of them in one keystroke.
 
-> **Status:** early preview (`v0.x`). The first phase ships only a hook recorder, used to learn real event sequences before the state machine is built.
+> **Status:** early preview (`v0.x`). It is used daily on a server with 11 sessions, 64 windows and 120 panes.
 
-## Design goals
+| State | Glyph | Meaning |
+|---|---|---|
+| waiting | ◆ red | Claude is blocked on you: a permission prompt or a question |
+| done | ✔ green | the turn finished while you were elsewhere; it clears when you look at the pane |
+| running | ● yellow | Claude is working, including background tasks it will resume from |
+| idle | ○ grey | at its prompt, and you have seen it |
 
-- **Event-driven, zero idle cost.** Claude Code hooks push state into tmux pane options. There is no daemon, no ticker, and no polling.
-- **Stays inside tmux.** A popup lists agents from all sessions, and a sidebar shows the current session's agents. Borders and window tabs render state with native tmux formats.
-- **Correct on real setups.** It is tested against a private tmux server loaded to 120 panes, on macOS and Linux.
+## How it works
 
-The state machine will be built on [fate](https://github.com/arisros/fate).
-
-## Phase 1: record hook sequences
-
-```sh
-make build
-./bin/deck install --claude --record          # preview the settings change
-./bin/deck install --claude --record --apply  # write it, with a backup
+```mermaid
+flowchart LR
+  CC[Claude Code hook] -->|stdin| H[deck hook]
+  H -->|flock| S[(session record)]
+  H -->|one tmux call| T[(pane options)]
+  T --> F[tab and border icons<br/>native tmux formats]
+  T -->|wait-for signal| SB[sidebar]
+  T --> P[popup]
 ```
 
-Each hook event is appended to `~/.local/state/tmux-agent-deck/record/<date>.jsonl`. The recorder keeps the following, and nothing else:
+- **Event-driven.** Claude Code hooks push state; nothing polls. There is no daemon and no ticker, so an idle server runs no deck process at all (an open sidebar blocks in `tmux wait-for`).
+- **tmux renders the icons.** Tabs and borders use format strings that tmux evaluates on redraw, so showing state costs no process.
+- **Silent endings are repaired.** Pressing Esc mid-turn and denying a permission fire no hook. When you leave such a pane, or open a view, the deck reads Claude's footer to correct the state.
+- **The state machine** is a [fate](https://github.com/arisros/fate) statechart, drawn in [docs/state-machine.md](docs/state-machine.md). The transitions come from sequences recorded in real sessions ([test/fixtures](test/fixtures)), not only from the hook documentation.
 
-- the event name
-- the notification type
-- the tool name (MCP tools collapse to `mcp`)
-- the session source and end reason
-- a hash of the session id
-- the tmux pane id
-- the payload's top-level field names
+## Install
 
-Prompts, tool inputs, paths, and titles are never written. The recorder hooks run async, so Claude never waits on them.
+Requirements: tmux 3.2+ and Go 1.24+ (the plugin builds itself on first load).
 
-To remove the recorder:
+1. Add the plugin with [tpm](https://github.com/tmux-plugins/tpm) and press `prefix I`:
+
+   ```tmux
+   set -g @plugin 'arisros/tmux-agent-deck'
+   ```
+
+2. Add the Claude Code hooks. The first command only previews the change; the second applies it, with a backup:
+
+   ```sh
+   ~/.config/tmux/plugins/tmux-agent-deck/bin/deck install --claude
+   ~/.config/tmux/plugins/tmux-agent-deck/bin/deck install --claude --apply
+   ```
+
+   (Use `~/.tmux/plugins/...` if that is where tpm keeps plugins.)
+
+3. Show state in your tabs and pane borders by adding the formats wherever you like:
+
+   ```tmux
+   set -g window-status-format         ' #I:#W#{E:@deck_window_icon} '
+   set -g window-status-current-format ' #I:#W#{E:@deck_window_icon} '
+   set -g pane-border-format           ' #{pane_title}#{E:@deck_pane_icon} '
+   ```
+
+   A window shows its most urgent agent.
+
+4. Check everything with `deck doctor`.
+
+## Use
+
+| Key | Action |
+|---|---|
+| `prefix a` | popup of agents in every session, most urgent first. `j`/`k` or arrows move, `/` filters, Enter jumps, `q` closes |
+| `prefix e` | toggle the sidebar for this session. It follows you across windows. Focus it (click, or your pane navigation) to use `j`/`k` and Enter |
+
+The sidebar lists the current session's agents plus a one-line count of the other sessions. There is one sidebar pane per session, which moves with you instead of being copied into every window.
+
+## Options
+
+Set these before tpm loads the plugin.
+
+| Option | Default | |
+|---|---|---|
+| `@deck-popup-key` | `a` | popup key (prefix table) |
+| `@deck-sidebar-key` | `e` | sidebar toggle key |
+| `@deck-sidebar-width` | `34` | sidebar width in columns |
+| `@deck-sound` | `on` | play a sound when an agent starts waiting or finishes, unless you are watching that pane |
+| `@deck-sound-command` | `afplay` (macOS), `paplay` (Linux) | player |
+| `@deck-sound-waiting` | Ping.aiff / bell.oga | |
+| `@deck-sound-done` | Funk.aiff / complete.oga | |
+
+If your Claude settings already play sounds or color tabs from hooks, remove those hooks; `deck doctor` points out tab coloring hooks.
+
+## Performance
+
+Measured by `go test ./test/integration -run Performance` on a private tmux server with 11 sessions, 64 windows, 120 panes and 9 agents (Apple M4, busy laptop):
+
+| Path | p50 | p95 |
+|---|---|---|
+| hook with no state change (every tool call) | 5.1 ms | 7.5 ms |
+| hook that changes state (a few per turn) | 12.9 ms | 21.5 ms |
+| view refresh (`deck list`) | 18.7 ms | 24.8 ms |
+| state machine restore, send and persist | 14 µs | |
+
+A no-change hook makes no tmux call. A state change makes exactly one, however many panes the server has; batches stay under tmux's command size limit.
+
+## Uninstall
 
 ```sh
-./bin/deck uninstall --claude --apply
+deck uninstall --claude --apply
 ```
+
+Then remove the `@plugin` line. If you remove the plugin first, the hooks become no-ops rather than errors.
 
 ## Development
 
 ```sh
-make test    # unit tests, including the fixture leak scanner
-make lint    # golangci-lint v2
+make test    # unit tests, fixture replay, integration and performance on private tmux servers
+make lint
 make build   # bin/deck
 ```
 
-Files under `test/fixtures/` come from real sessions and are checked by a scanner. The scanner fails the build if they contain a path, an email address, a ticket key, or a prompt or tool-input field.
+The integration tests start their own `tmux -L deck-test-*` servers and never touch the server you work in. Fixtures under `test/fixtures/` are recorded from real sessions with `deck hook --record`. A scanner fails the build if they contain a path, an email address, a ticket key, or a prompt or tool-input field.
+
+## Known limits
+
+- Repairing a silent Esc or denial relies on Claude Code's footer text (`esc to interrupt`, `? for shortcuts`). If a Claude release changes it, the deck leaves the state alone rather than guessing.
+- The plugin path must not contain spaces or quotes.
 
 ## License
 

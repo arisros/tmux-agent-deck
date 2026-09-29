@@ -29,7 +29,6 @@ stateDiagram-v2
     s_running --> s_done : Stop / since,bg
     s_running --> s_idle : Begin / since
     s_running --> s_idle : Screen [idle] / since
-    s_running --> s_idle : Stop [visible] / since,bg
     s_running --> s_running : Stop [background] / bg
     s_running --> s_waiting : NeedsInput / since
     s_running --> s_waiting : Permission / since
@@ -37,7 +36,6 @@ stateDiagram-v2
     s_waiting --> s_done : Stop / since,bg
     s_waiting --> s_idle : Begin / since
     s_waiting --> s_idle : Screen [idle] / since
-    s_waiting --> s_idle : Stop [visible] / since,bg
     s_waiting --> s_running : Prompt / since
     s_waiting --> s_running : Screen [working] / since
     s_waiting --> s_running : ToolEnd [main agent] / since

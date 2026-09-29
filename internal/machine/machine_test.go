@@ -49,7 +49,6 @@ func TestTransitions(t *testing.T) {
 		{"approval resumes", []Event{Prompt{}, Permission{}, ToolEnd{}}, Running},
 		{"subagent tool end keeps waiting", []Event{Prompt{}, Permission{}, ToolEnd{Subagent: true}}, Waiting},
 		{"unwatched stop is done", []Event{Prompt{}, Stop{}}, Done},
-		{"watched stop is idle", []Event{Prompt{}, Stop{Visible: true}}, Idle},
 		{"stop with background work keeps running", []Event{Prompt{}, Stop{Background: 1}}, Running},
 		{"background resume then stop is done", []Event{Prompt{}, Stop{Background: 1}, Prompt{}, Stop{}}, Done},
 		{"stop while waiting is done", []Event{Prompt{}, Permission{}, Stop{}}, Done},

@@ -16,7 +16,6 @@ import (
 
 // Tmux is the subset of tmux the adapter uses, so tests can fake it.
 type Tmux interface {
-	Visible(pane string) (bool, error)
 	Batch(cmds [][]string) error
 	Capture(pane string) (string, error)
 	PaneOption(pane, name string) (string, error)
@@ -69,6 +68,7 @@ func (d *Deck) Hook(p hook.Payload, pane string) error {
 		}
 		return d.Tmux.Batch(clear(pane))
 	case hook.Begin:
+		store.Prune(d.Dir, 72*time.Hour)
 		var snap []byte
 		if existed {
 			snap = rec.Snapshot
@@ -83,12 +83,6 @@ func (d *Deck) Hook(p hook.Payload, pane string) error {
 		return d.publish(pane, p.SessionID, res, "")
 	}
 
-	if s, ok := ev.(machine.Stop); ok && s.Background == 0 && pane != "" {
-		// Only the Stop that ends a turn needs to know whether the user is
-		// watching: a watched turn ends idle and silent.
-		s.Visible, _ = d.Tmux.Visible(pane)
-		ev = s
-	}
 	var snap []byte
 	if existed {
 		snap = rec.Snapshot
@@ -193,12 +187,16 @@ func (d *Deck) publish(pane, sid string, res machine.Result, sound string) error
 		{"set-option", "-p", "-t", pane, "@deck_since", strconv.FormatInt(res.Ctx.Since, 10)},
 		{"set-option", "-p", "-t", pane, "@deck_sid", sid},
 	}
-	if sound != "" {
-		// tmux decides and plays in the same round trip: nothing to query
-		// first, and the player runs detached from the hook.
-		cmds = append(cmds, []string{"if-shell", "-F", "-t", pane,
-			"#{&&:#{!=:#{@deck-sound},off},#{?" + tmux.VisibleFormat + ",0,1}}",
-			"run-shell -b '#{@deck-sound-command} #{@deck-sound-" + sound + "}'"})
+	// tmux decides and plays in the same round trip: nothing is queried
+	// first, and the player runs detached from the hook.
+	play := `if-shell -F "#{!=:#{@deck-sound},off}" "run-shell -b '#{@deck-sound-command} #{@deck-sound-` + sound + `}'"`
+	switch {
+	case sound == "done":
+		// A turn the user watched end is idle and silent.
+		cmds = append(cmds, []string{"if-shell", "-F", "-t", pane, tmux.VisibleFormat,
+			"set-option -p -t " + pane + " @deck_state idle", play})
+	case sound != "":
+		cmds = append(cmds, []string{"if-shell", "-F", "-t", pane, tmux.VisibleFormat, "", play})
 	}
 	cmds = append(cmds, []string{"wait-for", "-S", Signal})
 	return d.Tmux.Batch(cmds)

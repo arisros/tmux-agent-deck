@@ -64,12 +64,16 @@ type NeedsInput struct{ At int64 }
 // resumed by itself when a background task finished, which emits no Stop.
 type IdlePrompt struct{ At int64 }
 
-// Stop ends a turn. Background counts tasks still running; Visible says the
-// user is looking at the pane, which makes the turn idle instead of done.
+// Stop ends a turn. Background counts tasks still running.
+//
+// A turn the user watched end is idle rather than done. The machine does not
+// ask: the adapter resolves it inside tmux in the same call that publishes
+// the state, which saves a round trip per turn. Stored done and displayed
+// idle behave the same for every event except Focus, which only fires on a
+// displayed done.
 type Stop struct {
 	At         int64
 	Background int
-	Visible    bool
 }
 
 // Focus means the user looked at the pane.
@@ -173,7 +177,6 @@ func screen(kind string) func(Ctx, Event) bool {
 }
 
 func background(_ Ctx, e Event) bool { s, ok := e.(Stop); return ok && s.Background > 0 }
-func visible(_ Ctx, e Event) bool    { s, ok := e.(Stop); return ok && s.Visible }
 func mainAgent(_ Ctx, e Event) bool  { t, ok := e.(ToolEnd); return ok && !t.Subagent }
 
 // A Stop with background work left is not the end: Claude resumes by itself
@@ -181,7 +184,6 @@ func mainAgent(_ Ctx, e Event) bool  { t, ok := e.(ToolEnd); return ok && !t.Sub
 func stopTransitions() []tr {
 	return []tr{
 		{Guard: background, GuardName: "background", Actions: []action{recordBackground}},
-		{Target: Idle, Guard: visible, GuardName: "visible", Actions: []action{enter, recordBackground}},
 		{Target: Done, Actions: []action{enter, recordBackground}},
 	}
 }

@@ -15,7 +15,6 @@ import (
 )
 
 type fakeTmux struct {
-	visible bool
 	screen  string
 	opts    map[string]string // "pane/@name" -> value
 	batches [][][]string
@@ -23,7 +22,6 @@ type fakeTmux struct {
 
 func newFake() *fakeTmux { return &fakeTmux{opts: map[string]string{}} }
 
-func (f *fakeTmux) Visible(string) (bool, error)           { return f.visible, nil }
 func (f *fakeTmux) Capture(string) (string, error)         { return f.screen, nil }
 func (f *fakeTmux) PaneOption(p, n string) (string, error) { return f.opts[p+"/"+n], nil }
 
@@ -42,6 +40,8 @@ func (f *fakeTmux) Batch(cmds [][]string) error {
 
 func (f *fakeTmux) state(pane string) string { return f.opts[pane+"/@deck_state"] }
 
+// sounds lists the sound commands published; the fake has no client, so
+// every pane counts as unwatched.
 func (f *fakeTmux) sounds() []string {
 	var out []string
 	for _, b := range f.batches {
@@ -52,6 +52,18 @@ func (f *fakeTmux) sounds() []string {
 		}
 	}
 	return out
+}
+
+// watchedBranch is what tmux runs for a pane someone is looking at.
+func (f *fakeTmux) watchedBranch() string {
+	for _, b := range f.batches {
+		for _, c := range b {
+			if c[0] == "if-shell" {
+				return c[len(c)-2]
+			}
+		}
+	}
+	return ""
 }
 
 func newDeck(t *testing.T, f *fakeTmux) *Deck {
@@ -116,12 +128,22 @@ func TestSoundsOnlyOnEdges(t *testing.T) {
 
 func TestWatchedStopIsIdleAndSilent(t *testing.T) {
 	f := newFake()
-	f.visible = true
 	d := newDeck(t, f)
 	send(t, d, "%1", ev("UserPromptSubmit", ""))
 	send(t, d, "%1", ev("Stop", ""))
-	if f.state("%1") != machine.Idle || len(f.sounds()) != 0 {
-		t.Errorf("state %q, sounds %v", f.state("%1"), f.sounds())
+	if got := f.watchedBranch(); got != "set-option -p -t %1 @deck_state idle" {
+		t.Errorf("watched branch = %q, want the state set to idle without a sound", got)
+	}
+}
+
+func TestNoVisibilityRoundTrip(t *testing.T) {
+	f := newFake()
+	d := newDeck(t, f)
+	send(t, d, "%1", ev("UserPromptSubmit", ""))
+	before := len(f.batches)
+	send(t, d, "%1", ev("Stop", ""))
+	if len(f.batches)-before != 1 {
+		t.Errorf("a Stop took %d tmux calls, want 1", len(f.batches)-before)
 	}
 }
 

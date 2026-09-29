@@ -24,9 +24,20 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - name: install tmux
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then brew install tmux; else sudo apt-get update && sudo apt-get install -y tmux; fi
+          tmux -V
       - run: go vet ./...
-      - run: go test -race ./...
-      - run: make build && ./bin/deck version
+      - name: test (unit, integration on a private tmux server, performance at scale)
+        run: go test -race ./...
+        env:
+          # Shared runners are slower and noisier than a laptop; the local
+          # budgets in test/integration/perf_test.go are the real targets.
+          DECK_PERF_HOOK_MS: "60"
+          DECK_PERF_EDGE_MS: "100"
+          DECK_PERF_VIEW_MS: "300"
+      - run: make build && ./bin/deck version && ./bin/deck describe | head -3
 
   lint:
     runs-on: ubuntu-latest

@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"syscall"
+	"time"
 )
 
 // Record is what the deck remembers about a session.
@@ -23,13 +24,31 @@ type Record struct {
 	Snapshot json.RawMessage `json:"snapshot,omitempty"`
 }
 
-// DefaultDir is per user and per boot, since records only mean something
-// while their tmux panes exist.
+// DefaultDir is under the user's state directory rather than $TMPDIR: Claude's
+// hooks and tmux's run-shell can see different temp directories, and both
+// must find the same records.
 func DefaultDir() string {
 	if d := os.Getenv("DECK_STATE_DIR"); d != "" {
 		return d
 	}
-	return filepath.Join(os.TempDir(), fmt.Sprintf("tmux-agent-deck-%d", os.Getuid()))
+	base := os.Getenv("XDG_STATE_HOME")
+	if base == "" {
+		home, _ := os.UserHomeDir()
+		base = filepath.Join(home, ".local", "state")
+	}
+	return filepath.Join(base, "tmux-agent-deck", "sessions")
+}
+
+// Prune deletes records untouched for longer than maxAge: sessions whose
+// Claude process died without a SessionEnd.
+func Prune(dir string, maxAge time.Duration) {
+	files, _ := filepath.Glob(filepath.Join(dir, "*.json"))
+	cutoff := time.Now().Add(-maxAge)
+	for _, f := range files {
+		if fi, err := os.Stat(f); err == nil && fi.ModTime().Before(cutoff) {
+			_ = os.Remove(f)
+		}
+	}
 }
 
 var validID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
