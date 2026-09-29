@@ -53,6 +53,9 @@ func newHarness(t *testing.T) *harness {
 	h.tmux("set-environment", "-g", "DECK_STATE_DIR", h.state)
 	h.tmux("set-option", "-g", "focus-events", "on")
 	h.tmux("set-option", "-g", "@deck-sound", "off")
+	// As in the real config: a border line above every pane. Without it the
+	// tests missed a pin that looped forever.
+	h.tmux("set-option", "-g", "pane-border-status", "top")
 	h.deck("", "tmux-init")
 	return h
 }
@@ -131,4 +134,10 @@ func (h *harness) eventually(ok func() bool, what string) {
 		}
 	}
 	h.t.Fatalf("timed out waiting for %s", what)
+}
+
+// pins counts how often a sidebar pinned itself, from the deck's log.
+func (h *harness) pins() int {
+	b, _ := os.ReadFile(filepath.Join(filepath.Dir(h.state), "views.log"))
+	return strings.Count(string(b), "pin ")
 }

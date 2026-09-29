@@ -394,7 +394,7 @@ func sidebarRun(c tmux.Client, session string) (err error) {
 			// window: the moment it is alone. A rotation moves it into
 			// another slot, which also resizes it: pin it back.
 			load(false)
-			if !alone {
+			if !alone && pinEnabled(c) {
 				_ = sidebarPin(c, session)
 			}
 		}
@@ -519,19 +519,44 @@ func logFailure(view string, err *error) {
 // swap, rotation or layout change moved it: tmux cannot exempt a pane from
 // those, so the sidebar returns to its place once they are done.
 func sidebarPin(c tmux.Client, session string) error {
+	// The layout hook and the sidebar's own resize handler fire together.
+	// Without a lock both see a misplaced sidebar and both move it, and each
+	// move is a new layout change. Under the lock, the second caller finds
+	// the sidebar already in place.
+	unlock, err := lockFile(filepath.Join(filepath.Dir(store.DefaultDir()), "pin.lock"))
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	p := sidebarPane(c, session)
 	if p == "" {
 		return nil
 	}
-	out, err := c.Run("display-message", "-p", "-t", p, "#{window_id} #{pane_at_left} #{pane_height} #{window_height}")
+	// Edge flags, not heights: with pane-border-status on, a full-height
+	// pane is shorter than its window, and comparing heights made every
+	// check fail, so the pin re-ran on its own layout change forever.
+	out, err := c.Run("display-message", "-p", "-t", p,
+		"#{window_id} #{pane_at_left} #{pane_at_top} #{pane_at_bottom} #{@deck_pinned_at}")
 	if err != nil {
 		return err
 	}
 	f := strings.Fields(out)
-	if len(f) != 4 || (f[1] == "1" && f[2] == f[3]) {
+	if len(f) < 4 || (f[1] == "1" && f[2] == "1" && f[3] == "1") {
 		return nil // already the full-height left column
 	}
+	// Whatever else goes wrong, never pin more than once per interval: a
+	// pin changes the layout, and the layout hook must not be able to spin.
+	now := time.Now().Unix()
+	if len(f) == 5 {
+		if last, err := strconv.ParseInt(f[4], 10, 64); err == nil && now-last < pinInterval {
+			return nil
+		}
+	}
 	window := f[0]
+	if _, err := c.Run("set-option", "-p", "-t", p, "@deck_pinned_at", strconv.FormatInt(now, 10)); err != nil {
+		return err
+	}
+	logView("pin "+p+" back to the left of "+window, nil)
 	// break-pane, then join-pane back: the only way to make a pane the full-
 	// height left column of its own window again. The sidebar process keeps
 	// running across both.
@@ -542,4 +567,28 @@ func sidebarPin(c tmux.Client, session string) error {
 		{"join-pane", "-d", "-f", "-h", "-b", "-l", sidebarWidth(c), "-s", p, "-t", window},
 		{"set-option", "-t", session, "@deck_sidebar_window", window},
 	})
+}
+
+// pinInterval is the least time between two pins of one sidebar, in seconds.
+const pinInterval = 2
+
+// lockFile takes an exclusive lock on path, waiting for it if needed.
+func lockFile(path string) (func(), error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		f.Close()
+		return nil, err
+	}
+	return func() { f.Close() }, nil
+}
+
+func pinEnabled(c tmux.Client) bool {
+	out, _ := c.Run("show-options", "-gqv", "@deck-sidebar-pin")
+	return strings.TrimSpace(out) != "off"
 }

@@ -89,6 +89,7 @@ Set these before tpm loads the plugin.
 | `@deck-popup-key` | `a` | popup key (prefix table) |
 | `@deck-sidebar-key` | `e` | sidebar toggle key |
 | `@deck-sidebar-width` | `34` | sidebar width in columns |
+| `@deck-sidebar-pin` | `on` | put the sidebar back as the left column after a swap, rotation or layout change |
 | `@deck-tab-pulse` | `off` | pulse the running dot in tabs and borders on any terminal: one `deck tick` per second while an agent runs, and `status-interval 1` |
 | `@deck-sound` | `on` | play a sound when an agent starts waiting or finishes, unless you are watching that pane |
 | `@deck-sound-command` | `afplay` (macOS), `paplay` (Linux) | player |

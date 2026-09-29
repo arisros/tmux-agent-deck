@@ -61,6 +61,7 @@ func defaults() map[string]string {
 		"@deck-sidebar-width": "34",
 		"@deck-sound":         "on",
 		"@deck-tab-pulse":     "off",
+		"@deck-sidebar-pin":   "on",
 	}
 	if runtime.GOOS == "darwin" {
 		d["@deck-sound-command"] = "afplay"
@@ -139,7 +140,11 @@ func runTmuxInit(_ []string) error {
 	// window-layout-changed covers them all: tmux has no after- hook for
 	// swap-pane, rotate-window or join-pane. The pin itself changes the
 	// layout once more, and then finds the sidebar in place.
-	cmds = append(cmds, []string{"set-hook", "-g", "window-layout-changed" + hookIndex, pin})
+	if values["@deck-sidebar-pin"] != "off" {
+		cmds = append(cmds, []string{"set-hook", "-g", "window-layout-changed" + hookIndex, pin})
+	} else {
+		cmds = append(cmds, []string{"set-hook", "-gu", "window-layout-changed" + hookIndex})
+	}
 	// Any focus change wakes open sidebars, so the "you are here" mark moves
 	// at once. wait-for runs inside tmux: no process is started.
 	for _, h := range []string{"after-select-pane", "session-window-changed", "client-session-changed"} {

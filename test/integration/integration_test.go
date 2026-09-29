@@ -1,6 +1,8 @@
 package integration
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -292,6 +294,9 @@ func TestSidebarDoesNotStealFocus(t *testing.T) {
 	}
 }
 
+// pinWait outlasts the pin interval, so a second pin would have happened.
+const pinWait = 2500 * time.Millisecond
+
 // Swapping, rotating or re-laying out panes moves the sidebar like any pane;
 // it must come back as the full-height left column.
 func TestSidebarSurvivesSwapsAndLayouts(t *testing.T) {
@@ -303,7 +308,7 @@ func TestSidebarSurvivesSwapsAndLayouts(t *testing.T) {
 	sb := h.tmux("show-options", "-qv", "-t", "alpha", "@deck_sidebar_pane")
 	pinned := func() bool {
 		return h.opt(sb, "window_id") == w1 && h.opt(sb, "pane_at_left") == "1" &&
-			h.opt(sb, "pane_height") == h.opt(w1, "window_height")
+			h.opt(sb, "pane_at_top") == "1" && h.opt(sb, "pane_at_bottom") == "1"
 	}
 	h.eventually(pinned, "sidebar pinned at start")
 	other := ""
@@ -319,8 +324,15 @@ func TestSidebarSurvivesSwapsAndLayouts(t *testing.T) {
 		{"select-layout", "-t", w1, "even-vertical"},
 	}
 	for _, step := range steps {
+		before := h.pins()
 		h.tmux(step...)
 		h.eventually(pinned, "sidebar pinned after "+step[0])
+		// It must settle: one pin per change at most, never a loop.
+		time.Sleep(pinWait)
+		if n := h.pins() - before; n > 1 {
+			b, _ := os.ReadFile(filepath.Join(filepath.Dir(h.state), "views.log"))
+			t.Fatalf("%s caused %d pins; the sidebar is fighting the layout\n%s", step[0], n, b)
+		}
 	}
 	if got := len(strings.Split(h.tmux("list-panes", "-t", w1, "-F", "#{pane_id}"), "\n")); got != 4 {
 		t.Errorf("window has %d panes, want the 3 work panes and the sidebar", got)
