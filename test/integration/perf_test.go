@@ -67,7 +67,7 @@ func TestPerformanceAtScale(t *testing.T) {
 		a := agents[i%len(agents)]
 		hot = append(hot, h.hook(a, "PreToolUse", ""), h.hook(a, "PostToolUse", ""))
 	}
-	// Transitions: each publishes to tmux; Stop also asks for visibility.
+	// Transitions: each publishes to tmux in one call.
 	var edges []time.Duration
 	for i := 0; i < 40; i++ {
 		a := agents[i%len(agents)]

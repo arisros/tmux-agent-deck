@@ -2,6 +2,7 @@ package integration
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -274,7 +275,8 @@ func TestSidebarRestoresASqueezedWidth(t *testing.T) {
 	h.tmux("resize-pane", "-t", sb, "-x", "8")
 	h.eventually(func() bool { return h.opt(sb, "pane_width") == "34" }, "sidebar to restore its width")
 	h.tmux("resize-pane", "-t", sb, "-x", "40")
-	time.Sleep(300 * time.Millisecond)
+	// A negative check: give the sidebar several redraws to (wrongly) react.
+	time.Sleep(1200 * time.Millisecond)
 	if got := h.opt(sb, "pane_width"); got != "40" {
 		t.Errorf("a deliberate resize to 40 was undone: %s", got)
 	}
@@ -337,4 +339,99 @@ func TestSidebarSurvivesSwapsAndLayouts(t *testing.T) {
 	if got := len(strings.Split(h.tmux("list-panes", "-t", w1, "-F", "#{pane_id}"), "\n")); got != 4 {
 		t.Errorf("window has %d panes, want the 3 work panes and the sidebar", got)
 	}
+}
+
+func TestTmuxInitTurnsOnFocusEvents(t *testing.T) {
+	h := newHarness(t)
+	if got := h.tmux("show-options", "-gv", "focus-events"); got != "on" {
+		t.Errorf("focus-events = %q, want on (the harness starts with it off)", got)
+	}
+}
+
+func TestTickNeverShowsIdlesGlyph(t *testing.T) {
+	h := newHarness(t)
+	for i := 0; i < 3; i++ {
+		switch got := h.deck("", "tick"); got {
+		case "●", "◉", "◎":
+		default:
+			t.Fatalf("tick printed %q", got)
+		}
+	}
+}
+
+// Install and uninstall against a real file: the round trip restores it, and
+// every command carries the marker uninstall looks for.
+func TestInstallRoundTrip(t *testing.T) {
+	h := newHarness(t)
+	settings := filepath.Join(t.TempDir(), "settings.json")
+	original := "{\n  \"model\": \"opus\"\n}\n"
+	if err := os.WriteFile(settings, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out := h.deck("", "install", "--claude", "--settings", settings); !strings.Contains(out, "Preview only") {
+		t.Fatalf("install without --apply did not preview:\n%s", out)
+	}
+	if b, _ := os.ReadFile(settings); string(b) != original {
+		t.Fatal("preview changed the file")
+	}
+	h.deck("", "install", "--claude", "--apply", "--settings", settings)
+	b, _ := os.ReadFile(settings)
+	for _, want := range []string{`"statusLine"`, `"PreToolUse"`, "# tmux-agent-deck", " statusline;"} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("installed file lacks %q", want)
+		}
+	}
+	h.deck("", "uninstall", "--claude", "--apply", "--settings", settings)
+	if b, _ := os.ReadFile(settings); string(b) != original {
+		t.Errorf("uninstall did not restore the file:\n%s", b)
+	}
+}
+
+func TestDoctorReportsAHealthySetup(t *testing.T) {
+	h := newHarness(t)
+	claude := t.TempDir()
+	settings := filepath.Join(claude, "settings.json")
+	h.deck("", "install", "--claude", "--apply", "--settings", settings)
+	cmd := exec.Command(h.bin, "doctor")
+	cmd.Env = append(h.env(""), "CLAUDE_CONFIG_DIR="+claude)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("doctor failed: %v\n%s", err, out)
+	}
+	for _, want := range []string{"✔ tmux 3.3 or newer", "✔ focus-events on", "✔ Claude hooks", "✔ statusLine"} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("doctor output lacks %q:\n%s", want, out)
+		}
+	}
+}
+
+// tmux ends a killed pane with SIGHUP; the sidebar must still clean up, or
+// the follow hook keeps trying to move a pane that no longer exists.
+func TestKilledSidebarCleansUp(t *testing.T) {
+	h := newHarness(t)
+	sess, w1 := h.opt("alpha", "session_id"), h.opt("alpha", "window_id")
+	h.deck("", "sidebar", "toggle", "--session", sess, "--window", w1)
+	sb := h.tmux("show-options", "-qv", "-t", "alpha", "@deck_sidebar_pane")
+	h.eventually(func() bool { return strings.Contains(h.tmux("capture-pane", "-p", "-t", sb), "agents") }, "sidebar to draw")
+	h.tmux("kill-pane", "-t", sb)
+	h.eventually(func() bool {
+		return h.tmux("show-options", "-qv", "-t", "alpha", "@deck_sidebar_pane") == "" &&
+			h.tmux("show-options", "-qv", "-t", "alpha", "@deck_sidebar_window") == ""
+	}, "the killed sidebar to clear its session options")
+}
+
+// Leaving a pane whose turn ended silently repairs it through the tmux hook,
+// not only through a direct `deck reconcile`.
+func TestFocusOutRepairsThroughTheHook(t *testing.T) {
+	h := newHarness(t)
+	first := h.opt("alpha", "pane_id")
+	a := h.tmux("split-window", "-t", "alpha", "-P", "-F", "#{pane_id}",
+		`printf '  ⎿  Interrupted · What should Claude do instead?\n──────────────────\n❯ \n──────────────────\n  ⏸ manual mode on · ? for shortcuts\n'; exec `+h.fake)
+	h.eventually(func() bool { return h.opt(a, "pane_current_command") == "2.1.999" }, "fake claude")
+	h.hook(a, "UserPromptSubmit", "")
+	h.hook(a, "PermissionRequest", "")
+	h.attach("alpha")
+	h.tmux("select-pane", "-t", a)
+	h.tmux("select-pane", "-t", first) // a loses focus
+	h.eventually(func() bool { return h.opt(a, "@deck_state") == "idle" }, "the focus-out hook to repair the silent ending")
 }

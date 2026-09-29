@@ -17,6 +17,9 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/arisros/tmux-agent-deck/internal/hook"
+	"github.com/arisros/tmux-agent-deck/internal/store"
 )
 
 // Entry is one redacted hook event.
@@ -80,8 +83,8 @@ func FromHook(r io.Reader, pane string, now time.Time) (Entry, error) {
 		Reason:           p.Reason,
 		AgentType:        p.AgentType,
 		StopHookActive:   p.StopHookActive,
-		BackgroundTasks:  count(fields["background_tasks"]),
-		SessionCrons:     count(fields["session_crons"]),
+		BackgroundTasks:  hook.CountPtr(fields["background_tasks"]),
+		SessionCrons:     hook.CountPtr(fields["session_crons"]),
 		Keys:             keys,
 	}, nil
 }
@@ -110,38 +113,7 @@ func Append(dir string, e Entry) error {
 }
 
 // DefaultDir is where traces are kept: local state, never inside the repo.
-func DefaultDir() string {
-	base := os.Getenv("XDG_STATE_HOME")
-	if base == "" {
-		home, _ := os.UserHomeDir()
-		base = filepath.Join(home, ".local", "state")
-	}
-	return filepath.Join(base, "tmux-agent-deck", "record")
-}
-
-// count reports how many items a field holds without keeping any of them, so
-// "Stop while background work still runs" is visible in the trace. The field's
-// shape is undocumented, hence the tolerance for list, object, or number.
-func count(raw json.RawMessage) *int {
-	if raw == nil || string(raw) == "null" {
-		return nil
-	}
-	var list []json.RawMessage
-	if json.Unmarshal(raw, &list) == nil {
-		n := len(list)
-		return &n
-	}
-	var obj map[string]json.RawMessage
-	if json.Unmarshal(raw, &obj) == nil {
-		n := len(obj)
-		return &n
-	}
-	var n int
-	if json.Unmarshal(raw, &n) == nil {
-		return &n
-	}
-	return nil
-}
+func DefaultDir() string { return filepath.Join(store.Root(), "record") }
 
 func shortHash(s string) string {
 	if s == "" {

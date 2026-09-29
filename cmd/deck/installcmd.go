@@ -7,11 +7,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/arisros/tmux-agent-deck/internal/install"
-	"github.com/arisros/tmux-agent-deck/internal/record"
+	"github.com/arisros/tmux-agent-deck/internal/store"
 )
 
 func runInstall(args []string, add bool) error {
@@ -43,6 +44,7 @@ func runInstall(args []string, add bool) error {
 		}
 		h, events := install.Hook{Command: guarded(bin, "hook"), Timeout: 5}, liveEvents
 		if *rec {
+			fmt.Println("Note: the recorder replaces the live hooks; run install --claude again to return to them.")
 			// Recording never feeds state, so it may run async and out of order.
 			h, events = install.Hook{Command: guarded(bin, "hook --record"), Async: true, Timeout: 5}, recordEvents
 		}
@@ -107,10 +109,12 @@ var liveEvents = []string{
 }
 
 // guarded keeps Claude quiet if the plugin is removed without uninstalling:
-// a missing binary becomes a no-op instead of an error on every event.
+// a missing binary becomes a no-op instead of an error on every event. The
+// trailing comment is how uninstall recognizes the deck's commands, wherever
+// the binary lives.
 func guarded(bin, args string) string {
 	q := shellQuote(bin)
-	return "test -x " + q + " && " + q + " " + args + "; exit 0"
+	return "test -x " + q + " && " + q + " " + args + "; exit 0 # " + install.Marker
 }
 
 func defaultSettingsPath() string {
@@ -133,9 +137,6 @@ func selfPath() (string, error) {
 	}
 	if strings.Contains(p, "go-build") {
 		return "", errors.New("run a built binary (make build), not go run")
-	}
-	if !strings.Contains(p, install.Marker) {
-		return "", fmt.Errorf("binary path %s must contain %q so uninstall can find its hooks", p, install.Marker)
 	}
 	return p, nil
 }
@@ -172,7 +173,7 @@ func writeWithBackup(path string, before, after []byte) (string, error) {
 	}
 	var backup string
 	if before != nil {
-		dir := filepath.Join(filepath.Dir(record.DefaultDir()), "backups")
+		dir := filepath.Join(store.Root(), "backups")
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return "", err
 		}
@@ -181,6 +182,7 @@ func writeWithBackup(path string, before, after []byte) (string, error) {
 			return "", err
 		}
 		backup = f.Name()
+		defer pruneBackups(dir, 10)
 		_, werr := f.Write(before)
 		if cerr := f.Close(); werr == nil {
 			werr = cerr
@@ -205,4 +207,14 @@ func writeWithBackup(path string, before, after []byte) (string, error) {
 		return "", err
 	}
 	return backup, os.Rename(tmp.Name(), path)
+}
+
+// pruneBackups keeps the newest n settings backups.
+func pruneBackups(dir string, n int) {
+	files, _ := filepath.Glob(filepath.Join(dir, "settings-*.json"))
+	sort.Strings(files) // names start with a timestamp, so this is oldest first
+	for len(files) > n {
+		_ = os.Remove(files[0])
+		files = files[1:]
+	}
 }

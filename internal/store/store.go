@@ -24,19 +24,29 @@ type Record struct {
 	Snapshot json.RawMessage `json:"snapshot,omitempty"`
 }
 
-// DefaultDir is under the user's state directory rather than $TMPDIR: Claude's
-// hooks and tmux's run-shell can see different temp directories, and both
-// must find the same records.
+// DefaultDir is where session records live, under Root. It is not $TMPDIR:
+// Claude's hooks and tmux's run-shell can see different temp directories,
+// and both must find the same records.
 func DefaultDir() string {
 	if d := os.Getenv("DECK_STATE_DIR"); d != "" {
 		return d
+	}
+	return filepath.Join(Root(), "sessions")
+}
+
+// Root holds everything the deck keeps: sessions, usage, recordings, backups
+// and views.log. DECK_STATE_DIR (the sessions directory) moves all of it,
+// which is how tests and custom setups stay out of ~/.local/state.
+func Root() string {
+	if d := os.Getenv("DECK_STATE_DIR"); d != "" {
+		return filepath.Dir(d)
 	}
 	base := os.Getenv("XDG_STATE_HOME")
 	if base == "" {
 		home, _ := os.UserHomeDir()
 		base = filepath.Join(home, ".local", "state")
 	}
-	return filepath.Join(base, "tmux-agent-deck", "sessions")
+	return filepath.Join(base, "tmux-agent-deck")
 }
 
 // Prune deletes records untouched for longer than maxAge: sessions whose
@@ -62,14 +72,21 @@ type Locked struct {
 
 // Open locks the record for sessionID, creating the directory and file when
 // needed. Close releases the lock.
-func Open(dir, sessionID string) (*Locked, error) {
+func Open(dir, sessionID string) (*Locked, error) { return open(dir, sessionID, os.O_CREATE) }
+
+// OpenExisting is Open for a record that must already exist: it returns
+// os.ErrNotExist instead of creating an empty one. Focus and screen repairs
+// act on known sessions only, and must not resurrect a pruned record.
+func OpenExisting(dir, sessionID string) (*Locked, error) { return open(dir, sessionID, 0) }
+
+func open(dir, sessionID string, create int) (*Locked, error) {
 	if !validID.MatchString(sessionID) {
 		return nil, fmt.Errorf("invalid session id %q", sessionID)
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(filepath.Join(dir, sessionID+".json"), os.O_RDWR|os.O_CREATE, 0o600)
+	f, err := os.OpenFile(filepath.Join(dir, sessionID+".json"), os.O_RDWR|create, 0o600)
 	if err != nil {
 		return nil, err
 	}

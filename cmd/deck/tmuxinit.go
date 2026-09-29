@@ -19,7 +19,7 @@ import (
 //	pane-border-format:   ... #{E:@deck_pane_icon}
 //
 // tmux evaluates them itself on redraw, so showing state costs no process.
-// Glyphs match the views: a red badge for waiting (the one state that needs
+// Glyphs match the views (the running pulse comes from ui.PulseGlyph): a red badge for waiting (the one state that needs
 // a decision), a green dot for running that blinks where the terminal
 // supports it, blue for done, grey for idle. Blinking is a terminal
 // attribute, so tmux never has to redraw to animate it.
@@ -58,7 +58,7 @@ func defaults() map[string]string {
 	d := map[string]string{
 		"@deck-popup-key":     "a",
 		"@deck-sidebar-key":   "e",
-		"@deck-sidebar-width": "34",
+		"@deck-sidebar-width": defaultSidebarWidth,
 		"@deck-sound":         "on",
 		"@deck-tab-pulse":     "off",
 		"@deck-sidebar-pin":   "on",
@@ -87,8 +87,17 @@ func runTmuxInit(_ []string) error {
 		return errors.New("tmux-agent-deck must be installed under a path without spaces or quotes: " + bin)
 	}
 	c := tmux.FromEnv()
+	if v, err := c.Run("display-message", "-p", "#{version}"); err == nil && !tmuxAtLeast("tmux "+strings.TrimSpace(v), 3, 3) {
+		// display-popup -b and -T, which the popup binding uses, arrived in 3.3.
+		return fmt.Errorf("tmux-agent-deck needs tmux 3.3 or newer, this server is %s", strings.TrimSpace(v))
+	}
 
 	var cmds [][]string
+	// The focus hooks, including the repair of silent endings when you leave
+	// a pane, only fire with focus events on.
+	if out, _ := c.Run("show-options", "-gv", "focus-events"); strings.TrimSpace(out) != "on" {
+		cmds = append(cmds, []string{"set-option", "-g", "focus-events", "on"})
+	}
 	values := map[string]string{}
 	for name, def := range defaults() {
 		out, _ := c.Run("show-options", "-gqv", name)
@@ -100,10 +109,22 @@ func runTmuxInit(_ []string) error {
 		values[name] = v
 	}
 	running := runningIcon
+	saved, _ := c.Run("show-options", "-gqv", "@deck-saved-status-interval")
+	saved = strings.TrimSpace(saved)
 	if values["@deck-tab-pulse"] == "on" {
 		running = fmt.Sprintf(runningPulseIcon, bin)
-		// A second-by-second pulse needs a second-by-second redraw.
+		// A second-by-second pulse needs a second-by-second redraw. The
+		// user's own interval is kept, to be restored when pulse goes off.
+		if saved == "" {
+			if cur, err := c.Run("show-options", "-gv", "status-interval"); err == nil && strings.TrimSpace(cur) != "1" {
+				cmds = append(cmds, []string{"set-option", "-g", "@deck-saved-status-interval", strings.TrimSpace(cur)})
+			}
+		}
 		cmds = append(cmds, []string{"set-option", "-g", "status-interval", "1"})
+	} else if saved != "" {
+		cmds = append(cmds,
+			[]string{"set-option", "-g", "status-interval", saved},
+			[]string{"set-option", "-gu", "@deck-saved-status-interval"})
 	}
 	cmds = append(cmds,
 		[]string{"set-option", "-g", "@deck_is_claude", tmux.IsClaudeFormat},

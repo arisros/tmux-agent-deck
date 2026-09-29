@@ -105,6 +105,16 @@ func Remove(settings []byte) ([]byte, error) {
 			out = append(out, member{ev.Key, mustJSON(kept)})
 		}
 	}
+	if len(out) == 0 {
+		// Nothing left but what the deck added: leave no empty "hooks" behind.
+		kept := object{}
+		for _, m := range root {
+			if m.Key != "hooks" {
+				kept = append(kept, m)
+			}
+		}
+		return format(kept.raw())
+	}
 	root = root.set("hooks", out.raw())
 	return format(root.raw())
 }
