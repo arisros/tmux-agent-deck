@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/arisros/tmux-agent-deck/compare/v0.1.0...v0.1.1) (2026-09-30)
+
+
+### Fixed
+
+* **tpm:** find a new enough go and parse tpm's clone url ([#4](https://github.com/arisros/tmux-agent-deck/issues/4)) ([027bb44](https://github.com/arisros/tmux-agent-deck/commit/027bb4468cf961de09ef9238b101677c6aab3aa2))
+
 ## 0.1.0 (2026-09-30)
 
 First release.
