@@ -4,26 +4,30 @@ on:
   push:
     branches: [main]
   pull_request:
+  # The release workflow dispatches CI for release PRs, which pull_request
+  # never sees because GITHUB_TOKEN pushes their commits.
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
   test:
-    name: test (${{ matrix.os }})
+    name: test (${{ matrix.os }}, go ${{ matrix.go }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        # macOS matters: BSD ps/stat/sed differ, and that is where this runs.
+        # macOS is where most users run this; ubuntu-latest ships tmux 3.4.
         os: [ubuntu-latest, macos-latest]
+        go: ['1.26', 'stable']
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod
+          go-version: ${{ matrix.go }}
       - name: install tmux
         run: |
           if [ "$RUNNER_OS" = macOS ]; then brew install tmux; else sudo apt-get update && sudo apt-get install -y tmux; fi
@@ -31,25 +35,58 @@ jobs:
       - run: go vet ./...
       - name: test (unit, fixture replay, integration on private tmux servers)
         run: go test -race ./...
-      - name: performance at scale (alone, 120 panes)
+        env:
+          DECK_LEAK_WORDS: ${{ secrets.DECK_LEAK_WORDS }}
+      - run: make build && ./bin/deck --version
+
+  perf:
+    name: performance at scale (120 panes)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: sudo apt-get update && sudo apt-get install -y tmux
+      - name: make perf
         run: make perf
         env:
-          # Shared runners are slower and noisier than a laptop; the local
-          # budgets in test/integration/perf_test.go are the real targets.
+          # Shared runners are slower and noisier than a laptop; the budgets
+          # in test/integration/perf_test.go are the real targets.
           DECK_PERF_HOOK_MS: "60"
           DECK_PERF_EDGE_MS: "100"
           DECK_PERF_VIEW_MS: "300"
-      - run: make build && ./bin/deck version && ./bin/deck describe | head -3
 
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - uses: golangci/golangci-lint-action@v8
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
-          version: v2.10
+          version: v2.10.1
+
+  checks:
+    name: shellcheck, tidy, goreleaser config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: shellcheck
+        run: shellcheck agent-deck.tmux scripts/*.sh
+      - name: go.mod and go.sum are tidy
+        run: go mod tidy && git diff --exit-code go.mod go.sum
+      - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          version: "~> v2"
+          args: check

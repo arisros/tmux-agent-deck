@@ -320,3 +320,16 @@ func TestAttachByPaneWhenNoSession(t *testing.T) {
 		t.Errorf("hooked row usage = %+v", u)
 	}
 }
+
+func TestDecodeMixedRead(t *testing.T) {
+	got := decode([]byte("j\x1b[Ak\x1b[<65;1;1Mx\x1b[1;5C/"))
+	want := []Key{{Rune: 'j'}, {Name: "up"}, {Rune: 'k'}, {Name: "wheeldown"}, {Rune: 'x'}, {Rune: '/'}}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("key %d = %v, want %v", i, got[i], want[i])
+		}
+	}
+}

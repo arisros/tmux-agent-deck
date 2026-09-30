@@ -2,6 +2,9 @@ package store
 
 import (
 	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"testing"
@@ -93,5 +96,26 @@ func TestCorruptRecordStartsOver(t *testing.T) {
 	defer l.Close()
 	if _, ok := l.Record(); ok {
 		t.Error("corrupt record reported as existing")
+	}
+}
+
+func TestOpenExistingNeverCreates(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := OpenExisting(dir, "gone"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("err = %v, want not exist", err)
+	}
+	if files, _ := filepath.Glob(filepath.Join(dir, "*")); len(files) != 0 {
+		t.Errorf("created %v", files)
+	}
+	l, _ := Open(dir, "here")
+	_ = l.Save(Record{Pane: "%1"})
+	l.Close()
+	l, err := OpenExisting(dir, "here")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	if r, ok := l.Record(); !ok || r.Pane != "%1" {
+		t.Errorf("got %+v %v", r, ok)
 	}
 }

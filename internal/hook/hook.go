@@ -82,20 +82,31 @@ func Map(p Payload, now int64) (Action, machine.Event) {
 // Count is the number of items in a list, object, or number field; 0 when it
 // is absent or unreadable.
 func Count(raw json.RawMessage) int {
+	if n := CountPtr(raw); n != nil {
+		return *n
+	}
+	return 0
+}
+
+// CountPtr is Count that tells "absent" (nil) apart from zero. The field's
+// shape is undocumented, hence the tolerance for list, object, or number.
+func CountPtr(raw json.RawMessage) *int {
 	if len(raw) == 0 || string(raw) == "null" {
-		return 0
+		return nil
 	}
 	var list []json.RawMessage
 	if json.Unmarshal(raw, &list) == nil {
-		return len(list)
+		n := len(list)
+		return &n
 	}
 	var obj map[string]json.RawMessage
 	if json.Unmarshal(raw, &obj) == nil {
-		return len(obj)
+		n := len(obj)
+		return &n
 	}
 	var n int
 	if json.Unmarshal(raw, &n) == nil {
-		return n
+		return &n
 	}
-	return 0
+	return nil
 }

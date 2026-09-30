@@ -14,19 +14,19 @@ var now = time.Date(2026, 9, 30, 1, 2, 3, 0, time.UTC)
 func TestFromHookRedacts(t *testing.T) {
 	in := `{
 		"session_id": "3f1c-secret-session",
-		"transcript_path": "/Users/someone/.claude/projects/-work-lora/x.jsonl",
-		"cwd": "/Users/someone/work/lora/lora-workspace",
+		"transcript_path": "/Users/someone/.claude/projects/-work-acme/x.jsonl",
+		"cwd": "/Users/someone/work/acme/acme-workspace",
 		"hook_event_name": "PreToolUse",
 		"tool_name": "mcp__atlassian__getJiraIssue",
 		"tool_input": {"issueKey": "BL-1234", "command": "cat /etc/passwd"},
-		"prompt": "fix the bfi loan flow"
+		"prompt": "fix the acme billing flow"
 	}`
 	e, err := FromHook(strings.NewReader(in), "%12", now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	out, _ := json.Marshal(e)
-	for _, leak := range []string{"secret", "/Users", "lora", "BL-1234", "passwd", "bfi", "atlassian", "Jira"} {
+	for _, leak := range []string{"secret", "/Users", "acme", "BL-1234", "passwd", "billing", "atlassian", "Jira"} {
 		if strings.Contains(string(out), leak) {
 			t.Errorf("entry leaks %q: %s", leak, out)
 		}
@@ -100,7 +100,7 @@ func TestFromHookCountsBackgroundWorkWithoutKeepingIt(t *testing.T) {
 		field string
 		want  *int
 	}{
-		{`"background_tasks":[{"id":"b1","command":"go test ./lora/..."},{"id":"b2"}]`, intp(2)},
+		{`"background_tasks":[{"id":"b1","command":"go test ./acme/..."},{"id":"b2"}]`, intp(2)},
 		{`"background_tasks":{"b1":{"command":"sleep 99"}}`, intp(1)},
 		{`"background_tasks":[]`, intp(0)},
 		{`"background_tasks":3`, intp(3)},
@@ -120,7 +120,7 @@ func TestFromHookCountsBackgroundWorkWithoutKeepingIt(t *testing.T) {
 			t.Errorf("%s: session_crons = %v, want 1", c.field, deref(e.SessionCrons))
 		}
 		out, _ := json.Marshal(e)
-		for _, leak := range []string{"lora", "sleep", "* * *", "b1"} {
+		for _, leak := range []string{"acme", "sleep", "* * *", "b1"} {
 			if strings.Contains(string(out), leak) {
 				t.Errorf("entry leaks %q: %s", leak, out)
 			}

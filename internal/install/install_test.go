@@ -163,3 +163,29 @@ func TestStatusLineTakesOnlyAFreeSlot(t *testing.T) {
 		t.Errorf("removed the user's own status line")
 	}
 }
+
+func TestRemoveLeavesNoEmptyHooks(t *testing.T) {
+	added, err := Add([]byte(`{"model":"opus"}`), []string{"Stop"}, deck)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := Remove(added)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "hooks") {
+		t.Errorf("empty hooks left behind:\n%s", out)
+	}
+}
+
+// Commands are found by the trailing marker, wherever the binary lives.
+func TestMarkerFindsCommandsAtAnyPath(t *testing.T) {
+	h := Hook{Command: "test -x /usr/local/bin/deck && /usr/local/bin/deck hook; exit 0 # tmux-agent-deck"}
+	added, err := Add([]byte("{}"), []string{"Stop"}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, _ := Remove(added); strings.Contains(string(out), "deck hook") {
+		t.Errorf("not removed:\n%s", out)
+	}
+}

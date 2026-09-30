@@ -465,3 +465,17 @@ func TestRunningToolNeverReadsIdle(t *testing.T) {
 		t.Errorf("state = %q, want running", f.state("%1"))
 	}
 }
+
+// A focus or screen repair on a session whose record was pruned must not
+// leave an empty record behind.
+func TestSendToPrunedSessionCreatesNothing(t *testing.T) {
+	f := newFake()
+	d := newDeck(t, f)
+	f.opts["%1/@deck_sid"] = "pruned"
+	if err := d.Focus("%1"); err != nil {
+		t.Fatal(err)
+	}
+	if files, _ := filepath.Glob(filepath.Join(d.Dir, "*.json")); len(files) != 0 {
+		t.Errorf("focus created %v", files)
+	}
+}

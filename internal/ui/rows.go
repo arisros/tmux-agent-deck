@@ -125,6 +125,10 @@ var pulse = []Style{
 // while a running agent is on screen.
 var Pulse int
 
+// PulseGlyph is frame n of the running pulse, for places that animate on
+// their own clock (the tab pulse ticks once a second).
+func PulseGlyph(n int) string { return pulse[n%len(pulse)].Glyph }
+
 // StyleOf is a state's style at the current animation frame.
 func StyleOf(state string) Style {
 	if state == machine.Running {

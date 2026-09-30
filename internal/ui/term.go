@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/term"
 )
@@ -123,26 +124,24 @@ func (t *Term) Trace() []string {
 	return append([]string(nil), t.input...)
 }
 
+// decode splits one read into keys. A read can hold several keys and escape
+// sequences at once (typing fast, or a paste), so sequences are cut out one
+// at a time instead of matching the whole read.
 func decode(b []byte) []Key {
 	s := string(b)
-	switch s {
-	case "\x1b":
+	if s == "\x1b" {
 		return []Key{{Name: "esc"}}
-	case "\x1b[A", "\x1bOA":
-		return []Key{{Name: "up"}}
-	case "\x1b[B", "\x1bOB":
-		return []Key{{Name: "down"}}
-	case "\x1b[C", "\x1bOC":
-		return []Key{{Name: "right"}}
-	}
-	if strings.HasPrefix(s, "\x1b[<") {
-		return mouse(s)
-	}
-	if strings.HasPrefix(s, "\x1b") {
-		return nil
 	}
 	var keys []Key
-	for _, r := range s {
+	for len(s) > 0 {
+		if strings.HasPrefix(s, "\x1b") {
+			n, k := escape(s)
+			keys = append(keys, k...)
+			s = s[n:]
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(s)
+		s = s[size:]
 		switch r {
 		case '\r', '\n':
 			keys = append(keys, Key{Name: "enter"})
@@ -161,6 +160,48 @@ func decode(b []byte) []Key {
 		}
 	}
 	return keys
+}
+
+// escape reads one escape sequence at the start of s and returns its length
+// and the key it means, if any. Unknown sequences are skipped whole.
+func escape(s string) (int, []Key) {
+	if len(s) < 2 {
+		return len(s), []Key{{Name: "esc"}}
+	}
+	switch s[1] {
+	case 'O': // SS3: ESC O A
+		if len(s) >= 3 {
+			return 3, arrow(s[2])
+		}
+		return len(s), nil
+	case '[': // CSI: ESC [ params final
+		for i := 2; i < len(s); i++ {
+			if s[i] >= 0x40 && s[i] <= 0x7e {
+				seq := s[:i+1]
+				if strings.HasPrefix(seq, "\x1b[<") {
+					return i + 1, mouse(seq)
+				}
+				if i == 2 {
+					return i + 1, arrow(s[i])
+				}
+				return i + 1, nil
+			}
+		}
+		return len(s), nil
+	}
+	return 1, []Key{{Name: "esc"}}
+}
+
+func arrow(c byte) []Key {
+	switch c {
+	case 'A':
+		return []Key{{Name: "up"}}
+	case 'B':
+		return []Key{{Name: "down"}}
+	case 'C':
+		return []Key{{Name: "right"}}
+	}
+	return nil
 }
 
 // Watch delivers a value each time a hook signals the deck's wait-for

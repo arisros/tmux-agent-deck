@@ -9,10 +9,37 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 )
+
+// Built once for the whole run: every test starts its own tmux server but
+// shares the binaries.
+var sharedBin, sharedFake string
+
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "deck-it-")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	sharedBin = filepath.Join(dir, "tmux-agent-deck", "bin", "deck")
+	sharedFake = filepath.Join(dir, "2.1.999")
+	for _, b := range [][]string{
+		{"build", "-o", sharedBin, "../../cmd/deck"},
+		{"build", "-o", sharedFake, "./testdata/fakeclaude"},
+	} {
+		if out, err := exec.Command("go", b...).CombinedOutput(); err != nil {
+			fmt.Fprintf(os.Stderr, "go %v: %v\n%s", b, err, out)
+			os.Exit(1)
+		}
+	}
+	code := m.Run()
+	_ = os.RemoveAll(dir)
+	os.Exit(code)
+}
 
 type harness struct {
 	t      *testing.T
@@ -31,16 +58,9 @@ func newHarness(t *testing.T) *harness {
 	h := &harness{
 		t:      t,
 		socket: fmt.Sprintf("deck-test-%d-%d", os.Getpid(), rand.Int()),
-		bin:    filepath.Join(dir, "tmux-agent-deck", "bin", "deck"),
-		fake:   filepath.Join(dir, "2.1.999"),
+		bin:    sharedBin,
+		fake:   sharedFake,
 		state:  filepath.Join(dir, "state"),
-	}
-	build := exec.Command("go", "build", "-o", h.bin, "../../cmd/deck")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build: %v\n%s", err, out)
-	}
-	if out, err := exec.Command("go", "build", "-o", h.fake, "./testdata/fakeclaude").CombinedOutput(); err != nil {
-		t.Fatalf("build fake claude: %v\n%s", err, out)
 	}
 
 	h.tmux("-f", "/dev/null", "new-session", "-d", "-s", "alpha", "-x", "240", "-y", "70", "sleep 100000")
@@ -51,7 +71,7 @@ func newHarness(t *testing.T) *harness {
 	})
 	// Jobs started by this server's hooks inherit its global environment.
 	h.tmux("set-environment", "-g", "DECK_STATE_DIR", h.state)
-	h.tmux("set-option", "-g", "focus-events", "on")
+	h.tmux("set-option", "-g", "focus-events", "off") // tmux-init must turn it on
 	h.tmux("set-option", "-g", "@deck-sound", "off")
 	// As in the real config: a border line above every pane. Without it the
 	// tests missed a pin that looped forever.
@@ -140,4 +160,26 @@ func (h *harness) eventually(ok func() bool, what string) {
 func (h *harness) pins() int {
 	b, _ := os.ReadFile(filepath.Join(filepath.Dir(h.state), "views.log"))
 	return strings.Count(string(b), "pin ")
+}
+
+// attach connects a real client in a pseudo-terminal. Focus hooks only fire
+// for a focused client, which a detached test server never has.
+func (h *harness) attach(session string) {
+	h.t.Helper()
+	if _, err := exec.LookPath("script"); err != nil {
+		h.t.Skip("script(1) not available to attach a client")
+	}
+	tmuxCmd := "tmux -L " + h.socket + " attach -t " + session
+	var cmd *exec.Cmd
+	if runtime.GOOS == "darwin" {
+		cmd = exec.Command("script", "-q", "/dev/null", "sh", "-c", tmuxCmd)
+	} else {
+		cmd = exec.Command("script", "-qfc", tmuxCmd, "/dev/null")
+	}
+	cmd.Env = append(h.env(""), "TERM=xterm-256color")
+	if err := cmd.Start(); err != nil {
+		h.t.Fatal(err)
+	}
+	h.t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+	h.eventually(func() bool { return strings.Contains(h.tmux("list-clients", "-F", "#{client_flags}"), "focused") }, "a focused client")
 }

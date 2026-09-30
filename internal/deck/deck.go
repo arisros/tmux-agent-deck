@@ -4,7 +4,9 @@
 package deck
 
 import (
+	"errors"
 	"fmt"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -225,7 +227,10 @@ func (d *Deck) Discover(panes []tmux.Pane) int {
 }
 
 func (d *Deck) send(pane, sid string, ev machine.Event) error {
-	l, err := store.Open(d.Dir, sid)
+	l, err := store.OpenExisting(d.Dir, sid)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil // pruned or never recorded: nothing to update
+	}
 	if err != nil {
 		return err
 	}

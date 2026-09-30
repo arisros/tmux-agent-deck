@@ -73,37 +73,28 @@ func listAgents(d *deck.Deck, c tmux.Client, repair bool) ([]tmux.Pane, []ui.Row
 
 func runPopup(args []string) (err error) {
 	defer logFailure("popup", &err)
-	fs := flag.NewFlagSet("popup", flag.ContinueOnError)
-	client := fs.String("client", "", "tmux client to switch")
-	current := fs.String("pane", "", "pane the popup was opened from")
-	if err := fs.Parse(args); err != nil {
-		return err
+	if len(args) > 0 {
+		return fmt.Errorf("popup takes no arguments")
 	}
 	d, c, err := newDeck()
 	if err != nil {
 		return err
 	}
-	if *client == "" || *current == "" {
-		// The binding passes nothing: tmux sometimes hands a popup its shell
-		// command without expanding formats, and a bare "#{...}" then starts
-		// a shell comment that swallows the rest of the line. From inside the
-		// popup, tmux resolves the client that opened it.
-		if out, err := c.Run("display-message", "-p", "#{client_name}\t#{pane_id}"); err == nil {
-			if f := strings.SplitN(strings.TrimSpace(out), "\t", 2); len(f) == 2 {
-				if *client == "" {
-					*client = f[0]
-				}
-				if *current == "" {
-					*current = f[1]
-				}
-			}
+	// The binding passes nothing: tmux can hand a popup its shell command
+	// with #{...} unexpanded, and the shell then drops the rest of the line
+	// as a comment. From inside the popup, tmux resolves the client that
+	// opened it and the pane that client is in.
+	client, current := "", ""
+	if out, err := c.Run("display-message", "-p", "#{client_name}\t#{pane_id}"); err == nil {
+		if f := strings.SplitN(strings.TrimSpace(out), "\t", 2); len(f) == 2 {
+			client, current = f[0], f[1]
 		}
 	}
 	_, rows, limits, err := agents(d, c, true)
 	if err != nil {
 		return err
 	}
-	l := &ui.List{All: rows, Current: *current, Limits: limits}
+	l := &ui.List{All: rows, Current: current, Limits: limits}
 
 	t, err := ui.OpenTerm()
 	if err != nil {
@@ -139,7 +130,7 @@ func runPopup(args []string) (err error) {
 				return nil
 			case ui.Jump:
 				if r, ok := l.Selected(); ok {
-					return jump(c, *client, r.ID, true)
+					return jump(c, client, r.ID, true)
 				}
 			case ui.Kill:
 				if r, ok := l.Selected(); ok {
@@ -185,7 +176,7 @@ func jump(c tmux.Client, client, pane string, switchClient bool) error {
 
 func runSidebar(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: deck sidebar toggle|follow|run --session S [--window W]")
+		return errors.New("usage: deck sidebar toggle|run|pin --session S [--window W]")
 	}
 	fs := flag.NewFlagSet("sidebar", flag.ContinueOnError)
 	session := fs.String("session", "", "tmux session id")
@@ -200,8 +191,6 @@ func runSidebar(args []string) error {
 	switch args[0] {
 	case "toggle":
 		return sidebarToggle(c, *session, *window)
-	case "follow":
-		return sidebarFollow(c, *session, *window)
 	case "run":
 		return sidebarRun(c, *session)
 	case "pin":
@@ -233,8 +222,11 @@ func sidebarWidth(c tmux.Client) string {
 			return w
 		}
 	}
-	return "34"
+	return defaultSidebarWidth
 }
+
+// defaultSidebarWidth is @deck-sidebar-width when the user sets none.
+const defaultSidebarWidth = "34"
 
 // One sidebar per session: a single pane that moves to whichever window the
 // session shows, instead of a copy per window.
@@ -258,21 +250,6 @@ func sidebarToggle(c tmux.Client, session, window string) error {
 	return c.Batch([][]string{
 		{"set-option", "-p", "-t", p, "@deck_sidebar", "1"},
 		{"set-option", "-t", session, "@deck_sidebar_pane", p},
-		{"set-option", "-t", session, "@deck_sidebar_window", window},
-	})
-}
-
-func sidebarFollow(c tmux.Client, session, window string) error {
-	p := sidebarPane(c, session)
-	if p == "" || window == "" {
-		return nil
-	}
-	out, err := c.Run("display-message", "-p", "-t", p, "#{window_id}")
-	if err != nil || strings.TrimSpace(out) == window {
-		return err
-	}
-	return c.Batch([][]string{
-		{"join-pane", "-d", "-f", "-h", "-b", "-l", sidebarWidth(c), "-s", p, "-t", window},
 		{"set-option", "-t", session, "@deck_sidebar_window", window},
 	})
 }
@@ -347,6 +324,10 @@ func sidebarRun(c tmux.Client, session string) (err error) {
 	keys, changed := t.Keys(), ui.Watch(ctx, c.Flags(), deck.Signal)
 	winch := make(chan os.Signal, 1)
 	signal.Notify(winch, syscall.SIGWINCH)
+	// tmux ends a killed pane with SIGHUP. Returning runs the same cleanup
+	// as q, so the session never keeps the id of a dead sidebar.
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGHUP, syscall.SIGTERM, syscall.SIGINT)
 	tick := time.NewTicker(5 * time.Second)
 	defer tick.Stop()
 	anim := time.NewTicker(250 * time.Millisecond)
@@ -389,6 +370,8 @@ func sidebarRun(c tmux.Client, session string) (err error) {
 			load(false)
 		case <-tick.C:
 			load(true)
+		case <-stop:
+			return nil
 		case <-winch:
 			// Closing the last other pane resizes the sidebar to the full
 			// window: the moment it is alone. A rotation moves it into
@@ -484,13 +467,13 @@ func tmuxQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`
 // small log next to the session records. A popup that closes on its own gives
 // the user nothing to read; this does.
 func logView(reason string, input []string) {
-	dir := filepath.Dir(store.DefaultDir())
+	dir := store.Root()
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return
 	}
 	name := filepath.Join(dir, "views.log")
-	if fi, err := os.Stat(name); err == nil && fi.Size() > 64<<10 {
-		_ = os.Remove(name)
+	if fi, err := os.Stat(name); err == nil && fi.Size() > 256<<10 {
+		_ = os.Rename(name, name+".1") // keep one previous log
 	}
 	f, err := os.OpenFile(name, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
 	if err != nil {
@@ -523,7 +506,7 @@ func sidebarPin(c tmux.Client, session string) error {
 	// Without a lock both see a misplaced sidebar and both move it, and each
 	// move is a new layout change. Under the lock, the second caller finds
 	// the sidebar already in place.
-	unlock, err := lockFile(filepath.Join(filepath.Dir(store.DefaultDir()), "pin.lock"))
+	unlock, err := lockFile(filepath.Join(store.Root(), "pin.lock"))
 	if err != nil {
 		return err
 	}
@@ -563,10 +546,22 @@ func sidebarPin(c tmux.Client, session string) error {
 	if _, err := c.Run("break-pane", "-d", "-s", p); err != nil {
 		return err
 	}
-	return c.Batch([][]string{
+	join := [][]string{
 		{"join-pane", "-d", "-f", "-h", "-b", "-l", sidebarWidth(c), "-s", p, "-t", window},
 		{"set-option", "-t", session, "@deck_sidebar_window", window},
-	})
+	}
+	if err := c.Batch(join); err == nil {
+		return nil
+	}
+	if err := c.Batch(join); err != nil {
+		// The sidebar now sits alone in the window break-pane made. Record
+		// where it is, so the follow hook moves it on the next switch.
+		out, _ := c.Run("display-message", "-p", "-t", p, "#{window_id}")
+		_, _ = c.Run("set-option", "-t", session, "@deck_sidebar_window", strings.TrimSpace(out))
+		logView("pin "+p+" failed to rejoin "+window+": "+err.Error(), nil)
+		return err
+	}
+	return nil
 }
 
 // pinInterval is the least time between two pins of one sidebar, in seconds.
