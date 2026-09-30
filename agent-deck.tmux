@@ -21,16 +21,6 @@ say() { tmux display-message "tmux-agent-deck: $*"; }
 version=$(git -C "$dir" describe --tags --always --dirty 2>/dev/null || echo unknown)
 current=$(cat "$stamp" 2>/dev/null || true)
 
-go_bin() {
-	local g
-	for g in "$(command -v go 2>/dev/null)" "$HOME/.local/share/mise/shims/go" /opt/homebrew/bin/go \
-		/usr/local/go/bin/go /usr/local/bin/go "$HOME/go/bin/go" "$HOME/sdk/go/bin/go" \
-		/home/linuxbrew/.linuxbrew/bin/go /snap/bin/go /usr/bin/go; do
-		[ -n "$g" ] && [ -x "$g" ] && { echo "$g"; return 0; }
-	done
-	return 1
-}
-
 # go_ok: the Go found is at least the version go.mod asks for.
 go_ok() {
 	local need have
@@ -39,18 +29,30 @@ go_ok() {
 	[ -n "$have" ] && [ "$(printf '%s\n%s\n' "$need" "$have" | sort -V | head -1)" = "$need" ]
 }
 
+# go_bin: the first Go new enough for go.mod. tmux's PATH often lacks mise or
+# brew, so an older system Go must not end the search.
+go_bin() {
+	local g
+	for g in "$(command -v go 2>/dev/null)" "$HOME/.local/share/mise/shims/go" /opt/homebrew/bin/go \
+		/usr/local/go/bin/go /usr/local/bin/go "$HOME/go/bin/go" "$HOME/sdk/go/bin/go" \
+		/home/linuxbrew/.linuxbrew/bin/go /snap/bin/go /usr/bin/go; do
+		[ -n "$g" ] && [ -x "$g" ] && go_ok "$g" && { echo "$g"; return 0; }
+	done
+	return 1
+}
+
 build() {
 	local g
-	g=$(go_bin) || return 1
-	go_ok "$g" || { echo "go $("$g" env GOVERSION) is older than go.mod asks" >>"$log"; return 1; }
+	g=$(go_bin) || { echo "no go $(awk '/^go /{print $2; exit}' "$dir/go.mod") or newer found" >>"$log"; return 1; }
 	(cd "$dir" && "$g" build -trimpath -ldflags "-s -w -X main.version=$version" -o bin/deck.new ./cmd/deck) >>"$log" 2>&1 &&
 		mv -f "$dir/bin/deck.new" "$bin"
 }
 
 # repo is owner/name from the checkout's remote, so forks download their own.
+# tpm clones over https://git::@github.com/, hence the optional userinfo.
 repo() {
 	git -C "$dir" config --get remote.origin.url 2>/dev/null |
-		sed -E 's#^(git@github\.com:|https://github\.com/)##; s#\.git$##'
+		sed -E 's#^(git@github\.com:|https://([^@/]*@)?github\.com/)##; s#\.git$##'
 }
 
 fetch() { curl -fsSL --retry 2 "$1" -o "$2" 2>>"$log" || wget -q "$1" -O "$2" 2>>"$log"; }
