@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.2.0](https://github.com/arisros/tmux-agent-deck/compare/v0.1.3...v0.2.0) (2026-10-01)
+
+
+### ⚠ BREAKING CHANGES
+
+* deck list --json keys are now all snake_case (pane, target, state, name, path) and gain reason, agent, branch, session_id and usage.
+
+### Added
+
+* say why agents wait, answer them, and track codex, gemini, opencode ([#10](https://github.com/arisros/tmux-agent-deck/issues/10)) ([5ea3d64](https://github.com/arisros/tmux-agent-deck/commit/5ea3d64089ec12869dedd08c8f97022b56ff5e96))
+
 ## [0.1.3](https://github.com/arisros/tmux-agent-deck/compare/v0.1.2...v0.1.3) (2026-10-01)
 
 
