@@ -33,11 +33,11 @@ const (
 	idleIcon         = ` #[fg=colour244]○#[default]`
 
 	// Every pane of the window contributes its state; the most urgent wins.
-	windowStates = `#{P:#{?#{E:@deck_is_claude},#{@deck_state},} }`
+	windowStates = `#{P:#{?#{E:@deck_alive},#{@deck_state},} }`
 )
 
 func paneIconFormat(running string) string {
-	return `#{?#{E:@deck_is_claude},#{?#{==:#{@deck_state},waiting},` + waitingIcon +
+	return `#{?#{E:@deck_alive},#{?#{==:#{@deck_state},waiting},` + waitingIcon +
 		`,#{?#{==:#{@deck_state},done},` + doneIcon +
 		`,#{?#{==:#{@deck_state},running},` + running +
 		`,#{?#{==:#{@deck_state},idle},` + idleIcon + `,}}}},}`
@@ -160,7 +160,8 @@ func runTmuxInit(_ []string) error {
 			[]string{"set-option", "-gu", "@deck-saved-status-interval"})
 	}
 	cmds = append(cmds,
-		[]string{"set-option", "-g", "@deck_is_claude", tmux.IsClaudeFormat},
+		[]string{"set-option", "-g", "@deck_alive", tmux.AliveFormat},
+		[]string{"set-option", "-gu", "@deck_is_claude"},
 		[]string{"set-option", "-g", "@deck_pane_icon", paneIconFormat(running)},
 		[]string{"set-option", "-g", "@deck_window_icon", windowIconFormat(running)},
 		[]string{"bind-key", values["@deck-popup-key"], "display-popup", "-E", "-w", "90%", "-h", "70%", "-b", "rounded",

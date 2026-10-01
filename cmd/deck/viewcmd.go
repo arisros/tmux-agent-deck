@@ -31,8 +31,8 @@ const staleAfter = 2 * time.Second
 // sidebar restores @deck-sidebar-width.
 const minSidebarWidth = 20
 
-// agents lists panes once, repairs stale busy agents, and lists again only
-// when a repair may have changed something.
+// agents lists panes once, forgets agents that have exited, repairs stale
+// busy agents, and lists again only when one of those changed something.
 func agents(d *deck.Deck, c tmux.Client, repair bool) ([]tmux.Pane, []ui.Row, *usage.Limits, error) {
 	panes, rows, err := listAgents(d, c, repair)
 	if err != nil {
@@ -47,7 +47,7 @@ func listAgents(d *deck.Deck, c tmux.Client, repair bool) ([]tmux.Pane, []ui.Row
 	if err != nil {
 		return nil, nil, err
 	}
-	if d.Discover(panes) > 0 {
+	if d.Sweep(panes)+d.Discover(panes) > 0 {
 		if panes, err = c.ListPanes(); err != nil {
 			return nil, nil, err
 		}

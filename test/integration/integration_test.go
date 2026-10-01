@@ -110,6 +110,41 @@ func TestDeadAgentHidden(t *testing.T) {
 	if out := h.deck("", "list"); strings.Contains(out, "running") {
 		t.Errorf("dead agent listed:\n%s", out)
 	}
+	// Listing swept it: nothing of the agent is left on the pane.
+	for _, o := range []string{"@deck_state", "@deck_sid", "@deck_cmd"} {
+		if got := h.opt(a, o); got != "" {
+			t.Errorf("%s = %q after the agent exited", o, got)
+		}
+	}
+	if out := h.deck("", "events", "--pane", a); !strings.Contains(out, "Exit") {
+		t.Errorf("the exit is not in the event log:\n%s", out)
+	}
+}
+
+// An agent started through a wrapper has a process name the deck cannot
+// know. It is tracked by the command its pane ran when its hooks fired.
+func TestAgentBehindAWrapperIsTracked(t *testing.T) {
+	h := newHarness(t)
+	a := h.tmux("split-window", "-d", "-t", "alpha", "-P", "-F", "#{pane_id}", "sleep 100000")
+	h.eventually(func() bool { return h.opt(a, "pane_current_command") == "sleep" }, "wrapper running")
+	h.hook(a, "UserPromptSubmit", "")
+	if got := h.opt(a, "@deck_cmd"); got != "sleep" {
+		t.Fatalf("@deck_cmd = %q, want the pane's command", got)
+	}
+	if icon := h.opt(a, "E:@deck_pane_icon"); !strings.Contains(icon, "●") {
+		t.Errorf("pane icon %q lacks the running dot", icon)
+	}
+	if out := h.deck("", "list"); !strings.Contains(out, "running") {
+		t.Errorf("wrapped agent not listed:\n%s", out)
+	}
+	h.tmux("respawn-pane", "-k", "-t", a, "cat")
+	h.eventually(func() bool { return h.opt(a, "pane_current_command") == "cat" }, "wrapper replaced")
+	if icon := h.opt(a, "E:@deck_pane_icon"); icon != "" {
+		t.Errorf("exited agent still shows %q", icon)
+	}
+	if out := h.deck("", "list"); strings.Contains(out, "running") {
+		t.Errorf("exited agent listed:\n%s", out)
+	}
 }
 
 func TestReconcileFromScreen(t *testing.T) {

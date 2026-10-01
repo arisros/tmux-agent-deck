@@ -60,13 +60,13 @@ func (r Row) Target() string { return r.Session + ":" + r.Window + "." + r.Index
 
 var priority = map[string]int{machine.Waiting: 0, machine.Done: 1, machine.Running: 2, machine.Idle: 3}
 
-// Agents keeps the panes that run a live Claude session the deck knows about,
-// most urgent first. A pane whose Claude died keeps its options until the
-// next hook, so the process check is what hides it.
+// Agents keeps the panes that run a live agent the deck knows about, most
+// urgent first. A pane whose agent died keeps its options until a view sweeps
+// it, so the liveness check is what hides it.
 func Agents(panes []tmux.Pane, now time.Time) []Row {
 	var rows []Row
 	for _, p := range panes {
-		if p.State == "" || p.Sidebar != "" || !tmux.IsClaude(p.Command) {
+		if p.State == "" || p.Sidebar != "" || !p.Alive() {
 			continue
 		}
 		age := time.Duration(0)

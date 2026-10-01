@@ -112,6 +112,13 @@ const (
 	// IsClaudeFormat matches a pane whose foreground process is Claude Code,
 	// which renames itself to its version number ("2.1.284").
 	IsClaudeFormat = `#{||:#{m/r:^[0-9]+\.[0-9]+\.[0-9]+$,#{pane_current_command}},#{m:claude*,#{pane_current_command}}}`
+
+	// AliveFormat is true while a pane still runs the agent the deck heard
+	// from: its foreground command is the one remembered in @deck_cmd when a
+	// hook last fired there. An agent started through a wrapper shows as the
+	// wrapper ("node"), so no list of process names can tell. Claude Code is
+	// also matched by name, since it renames itself after it starts.
+	AliveFormat = `#{||:#{==:#{pane_current_command},#{@deck_cmd}},` + IsClaudeFormat + `}`
 )
 
 // Pane is one row of list-panes.
@@ -120,7 +127,9 @@ type Pane struct {
 	WindowName, Command, Title, Path                string
 	State, SID, Sidebar                             string
 	// Reason is why a waiting agent waits, "permission Bash" or "question".
-	Reason                             string
+	Reason string
+	// Cmd is the pane's foreground command when a hook last fired there.
+	Cmd                                string
 	Since                              int64
 	PaneActive, WindowActive, Attached bool
 	WindowPanes                        int
@@ -131,7 +140,7 @@ var paneFields = []string{
 	"#{window_name}", "#{pane_current_command}", "#{pane_title}", "#{pane_current_path}",
 	"#{@deck_state}", "#{@deck_sid}", "#{@deck_sidebar}", "#{@deck_since}",
 	"#{pane_active}", "#{window_active}", "#{session_attached}", "#{window_panes}",
-	"#{@deck_reason}",
+	"#{@deck_reason}", "#{@deck_cmd}",
 }
 
 // sep must survive tmux's output escaping: tmux prints control characters
@@ -163,10 +172,15 @@ func ParsePanes(out string) []Pane {
 			WindowName: f[6], Command: f[7], Title: f[8], Path: f[9],
 			State: f[10], SID: f[11], Sidebar: f[12], Since: since,
 			PaneActive: f[14] == "1", WindowActive: f[15] == "1", Attached: attached > 0,
-			WindowPanes: windowPanes, Reason: f[18],
+			WindowPanes: windowPanes, Reason: f[18], Cmd: f[19],
 		})
 	}
 	return panes
+}
+
+// Alive matches the same panes as AliveFormat.
+func (p Pane) Alive() bool {
+	return (p.Cmd != "" && p.Command == p.Cmd) || IsClaude(p.Command)
 }
 
 // IsClaude matches the same processes as IsClaudeFormat.

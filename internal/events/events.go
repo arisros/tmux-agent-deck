@@ -17,8 +17,8 @@ type Event struct {
 	TS   int64  `json:"ts"`
 	SID  string `json:"sid,omitempty"`
 	Pane string `json:"pane,omitempty"`
-	// Kind is the machine event that caused the change, or Begin, End or
-	// Discover.
+	// Kind is the machine event that caused the change, or Begin, End,
+	// Discover or Exit.
 	Kind   string `json:"event"`
 	From   string `json:"from,omitempty"`
 	To     string `json:"to,omitempty"`
@@ -32,6 +32,8 @@ const (
 	Begin    = "Begin"
 	End      = "End"
 	Discover = "Discover"
+	// Exit is an agent whose process left its pane without a session end.
+	Exit = "Exit"
 )
 
 const (

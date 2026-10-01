@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -48,6 +49,16 @@ func runDoctor(_ []string) error {
 	check(strings.TrimSpace(icon) != "", "tmux-init has run", "icons, keys and tmux hooks")
 	hooks, _ := c.Run("show-hooks", "-g")
 	check(strings.Contains(hooks, " focus "), "focus hooks set", "")
+	keys, _ := c.Run("list-keys", "-T", "prefix")
+	check(strings.Contains(keys, " popup") && strings.Contains(keys, "sidebar toggle"), "keys bound",
+		"the popup and sidebar keys; another plugin or a later bind-key may have taken them")
+	if sound, _ := c.Run("show-options", "-gqv", "@deck-sound"); strings.TrimSpace(sound) != "off" {
+		player, _ := c.Run("show-options", "-gqv", "@deck-sound-command")
+		if f := strings.Fields(player); len(f) > 0 {
+			_, err := exec.LookPath(f[0])
+			check(err == nil, "sound player", f[0]+"; set @deck-sound off or @deck-sound-command if it is missing")
+		}
+	}
 
 	settings, err := os.ReadFile(defaultSettingsPath())
 	if err != nil {
@@ -95,6 +106,21 @@ func runDoctor(_ []string) error {
 	if panes, err := c.ListPanes(); err == nil {
 		rows := ui.Agents(panes, time.Now())
 		check(true, "agents visible", fmt.Sprintf("%d (%s)", len(rows), ui.Summary(ui.Counts(rows), false)))
+		stale, here := 0, map[string]bool{}
+		for _, p := range panes {
+			here[p.SID] = p.SID != ""
+			if p.State != "" && p.Sidebar == "" && !p.Alive() {
+				stale++
+			}
+		}
+		check(stale == 0, "no stale agents", fmt.Sprintf("%d panes keep a state after their agent exited; opening a view clears them", stale))
+		orphans := 0
+		for _, f := range files {
+			if !here[strings.TrimSuffix(filepath.Base(f), ".json")] {
+				orphans++
+			}
+		}
+		check(true, "session records", fmt.Sprintf("%d without a pane on this server; they are pruned after 72 hours", orphans))
 	}
 	if !ok {
 		return fmt.Errorf("some checks failed")

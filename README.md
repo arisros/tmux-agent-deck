@@ -122,6 +122,7 @@ The full machine, generated from the code: [docs/state-machine.md](docs/state-ma
 | background tasks or subagents still running at `Stop` | `Stop` reports them | stays running; Claude resumes by itself when they finish |
 | a turn Claude resumed after background work | no `Stop` at all | `idle_prompt` ends it |
 | an agent that was idle when you installed the plugin | none yet | read from its screen once, then hooks take over |
+| an agent that crashed or was killed | none | each hook remembers the pane's foreground command; once it changes, the agent is hidden at once and forgotten when a view opens |
 
 The screen is only trusted for Claude's explicit markers (its dialogs, the spinner line, `esc to interrupt`, `Interrupted`, `· done`). A footer that merely looks quiet proves nothing: Claude hides `esc to interrupt` while a tool runs in auto mode.
 
@@ -172,7 +173,7 @@ Set them before tpm loads the plugin.
 
 | Symptom | Look at |
 |---|---|
-| anything | `deck doctor` checks tmux, focus events, hooks, statusLine and the binary |
+| anything | `deck doctor` checks tmux, focus events, keys, hooks, statusLine, the sound player, stale agents and the binary |
 | a state looks wrong | `deck events` lists every state change with what caused it (a hook, the screen, your focus); `--pane %12` narrows it, `--json` prints lines. It logs the stored state, so a turn you watched end reads `done` where the pane shows idle. `~/.local/state/tmux-agent-deck/views.log` adds the screen line a check relied on, and why a view closed |
 | the plugin did not load | `bin/install.log` and `bin/init.log` in the plugin directory |
 | old hook scripts color tabs or play sounds | remove them from `~/.claude/settings.json`; `deck doctor` flags tab coloring |

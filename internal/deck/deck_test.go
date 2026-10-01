@@ -390,6 +390,53 @@ func TestFixtures(t *testing.T) {
 	}
 }
 
+// A recording nobody replays protects nothing.
+func TestEveryFixtureIsReplayed(t *testing.T) {
+	src, err := os.ReadFile("deck_test.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, _ := filepath.Glob(filepath.Join("..", "..", "test", "fixtures", "*.jsonl"))
+	if len(files) == 0 {
+		t.Fatal("no fixtures found")
+	}
+	for _, f := range files {
+		name := strings.TrimSuffix(filepath.Base(f), ".jsonl")
+		if !strings.Contains(string(src), `"`+name+`":`) {
+			t.Errorf("fixture %s has no row in TestFixtures", name)
+		}
+	}
+}
+
+func TestSweepForgetsExitedAgents(t *testing.T) {
+	f := newFake()
+	d := newDeck(t, f)
+	var kinds []string
+	d.Emit = func(e events.Event) { kinds = append(kinds, e.Kind+" "+e.Pane) }
+	send(t, d, "%1", ev("UserPromptSubmit", ""))
+	send(t, d, "%2", `{"hook_event_name":"UserPromptSubmit","session_id":"s2"}`)
+	kinds = nil
+
+	n := d.Sweep([]tmux.Pane{
+		{ID: "%1", State: machine.Running, SID: "s1", Command: "zsh", Cmd: "node"},
+		{ID: "%2", State: machine.Running, SID: "s2", Command: "node", Cmd: "node"},
+		{ID: "%3", Command: "zsh"},
+		{ID: "%4", State: machine.Idle, Command: "zsh", Sidebar: "1"},
+	})
+	if n != 1 || strings.Join(kinds, ",") != "Exit %1" {
+		t.Fatalf("swept %d (%v), want only the pane whose agent exited", n, kinds)
+	}
+	if f.state("%1") != "" || f.state("%2") != machine.Running {
+		t.Errorf("states after sweep: %q %q", f.state("%1"), f.state("%2"))
+	}
+	if _, err := os.Stat(filepath.Join(d.Dir, "s1.json")); !os.IsNotExist(err) {
+		t.Errorf("the exited agent's record survives: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(d.Dir, "s2.json")); err != nil {
+		t.Errorf("the live agent's record is gone: %v", err)
+	}
+}
+
 func TestReasonIsPublishedAndCleared(t *testing.T) {
 	f := newFake()
 	d := newDeck(t, f)

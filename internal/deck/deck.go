@@ -223,7 +223,8 @@ func (d *Deck) Discover(panes []tmux.Pane) int {
 		}
 		cmds = append(cmds,
 			[]string{"set-option", "-p", "-t", p.ID, "@deck_state", state},
-			[]string{"set-option", "-p", "-t", p.ID, "@deck_since", now})
+			[]string{"set-option", "-p", "-t", p.ID, "@deck_since", now},
+			remember(p.ID))
 		found = append(found, events.Event{Pane: p.ID, Kind: events.Discover, To: state, Source: machine.SourceScreen})
 	}
 	if len(cmds) == 0 {
@@ -237,6 +238,45 @@ func (d *Deck) Discover(panes []tmux.Pane) int {
 		d.emit(e)
 	}
 	return len(found)
+}
+
+// Sweep forgets every agent whose process has left its pane: the state
+// options are unset and the session record deleted, so a pane that fell back
+// to a shell stops being an agent at once instead of at the 72 hour prune.
+// It returns how many panes it cleared.
+func (d *Deck) Sweep(panes []tmux.Pane) int {
+	var cmds [][]string
+	var gone []tmux.Pane
+	for _, p := range panes {
+		if p.State == "" || p.Sidebar != "" || p.Alive() {
+			continue
+		}
+		cmds = append(cmds, unset(p.ID)...)
+		gone = append(gone, p)
+	}
+	if len(gone) == 0 {
+		return 0
+	}
+	cmds = append(cmds, []string{"wait-for", "-S", Signal})
+	if err := d.Tmux.Batch(cmds); err != nil {
+		return 0
+	}
+	for _, p := range gone {
+		if p.SID != "" {
+			if l, err := store.OpenExisting(d.Dir, p.SID); err == nil {
+				_ = l.Delete()
+				l.Close()
+			}
+		}
+		d.emit(events.Event{SID: p.SID, Pane: p.ID, Kind: events.Exit, From: p.State})
+	}
+	return len(gone)
+}
+
+// remember stores the pane's foreground command, which is the agent while
+// one of its hooks runs. tmux expands the format itself, in the same call.
+func remember(pane string) []string {
+	return []string{"set-option", "-p", "-F", "-t", pane, "@deck_cmd", "#{pane_current_command}"}
 }
 
 func (d *Deck) send(pane, sid string, ev machine.Event) error {
@@ -296,6 +336,7 @@ func (d *Deck) publish(pane, sid string, res machine.Result, sound string) error
 		{"set-option", "-p", "-t", pane, "@deck_since", strconv.FormatInt(res.Ctx.Since, 10)},
 		{"set-option", "-p", "-t", pane, "@deck_sid", sid},
 	}
+	cmds = append(cmds, remember(pane))
 	if why := reason(res.Ctx); why != "" {
 		cmds = append(cmds, []string{"set-option", "-p", "-t", pane, "@deck_reason", why})
 	} else {
@@ -317,13 +358,15 @@ func (d *Deck) publish(pane, sid string, res machine.Result, sound string) error
 }
 
 func clear(pane string) [][]string {
-	return [][]string{
-		{"set-option", "-p", "-u", "-t", pane, "@deck_state"},
-		{"set-option", "-p", "-u", "-t", pane, "@deck_since"},
-		{"set-option", "-p", "-u", "-t", pane, "@deck_sid"},
-		{"set-option", "-p", "-u", "-t", pane, "@deck_reason"},
-		{"wait-for", "-S", Signal},
+	return append(unset(pane), []string{"wait-for", "-S", Signal})
+}
+
+func unset(pane string) [][]string {
+	var cmds [][]string
+	for _, o := range []string{"@deck_state", "@deck_since", "@deck_sid", "@deck_reason", "@deck_cmd"} {
+		cmds = append(cmds, []string{"set-option", "-p", "-u", "-t", pane, o})
 	}
+	return cmds
 }
 
 // Classify reads a Claude Code screen. It only concludes from explicit
