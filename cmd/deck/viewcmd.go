@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/arisros/tmux-agent-deck/internal/deck"
+	"github.com/arisros/tmux-agent-deck/internal/git"
 	"github.com/arisros/tmux-agent-deck/internal/store"
 	"github.com/arisros/tmux-agent-deck/internal/tmux"
 	"github.com/arisros/tmux-agent-deck/internal/ui"
@@ -39,7 +40,7 @@ func agents(d *deck.Deck, c tmux.Client, repair bool) ([]tmux.Pane, []ui.Row, *u
 		return nil, nil, nil, err
 	}
 	sessions, limits := usage.Load(usage.DefaultDir(d.Dir))
-	return panes, ui.Attach(rows, sessions), limits, nil
+	return panes, ui.Branches(ui.Attach(rows, sessions), git.Branch), limits, nil
 }
 
 func listAgents(d *deck.Deck, c tmux.Client, repair bool) ([]tmux.Pane, []ui.Row, error) {
@@ -463,6 +464,7 @@ func leaveEmptyWindow(c tmux.Client, session, self string) (bool, error) {
 func runList(args []string) error {
 	fs := flag.NewFlagSet("list", flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "print JSON")
+	filter := fs.String("filter", "", "only agents matching these terms, such as 'state:waiting branch:main'")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -474,16 +476,29 @@ func runList(args []string) error {
 	if err != nil {
 		return err
 	}
+	rows = ui.Filter(rows, *filter, false)
 	if *asJSON {
 		type item struct {
-			Pane, Target, State, Name, Path string
-			Reason                          string `json:"reason,omitempty"`
-			Agent                           string `json:"agent,omitempty"`
-			AgeSeconds                      int64  `json:"age_seconds"`
+			Pane       string         `json:"pane"`
+			Target     string         `json:"target"`
+			State      string         `json:"state"`
+			Reason     string         `json:"reason,omitempty"`
+			Agent      string         `json:"agent"`
+			Name       string         `json:"name"`
+			Path       string         `json:"path"`
+			Branch     string         `json:"branch,omitempty"`
+			SessionID  string         `json:"session_id,omitempty"`
+			AgeSeconds int64          `json:"age_seconds"`
+			Usage      *usage.Session `json:"usage,omitempty"`
 		}
 		out := []item{}
 		for _, r := range rows {
-			out = append(out, item{r.ID, r.Target(), r.State, r.Name, r.Path, r.Reason, r.Agent, int64(r.Age.Seconds())})
+			name := r.Agent
+			if name == "" {
+				name = "claude"
+			}
+			out = append(out, item{r.ID, r.Target(), r.State, r.Reason, name, r.Name, r.Path, r.Branch, r.SID,
+				int64(r.Age.Seconds()), r.Usage})
 		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
@@ -498,7 +513,7 @@ func runList(args []string) error {
 		if r.Reason != "" {
 			state += " (" + r.Reason + ")"
 		}
-		fmt.Fprintf(tw, "%s %s\t%s\t%s\t%s\t%s\n", ui.Styles[r.State].Glyph, state, ui.Age(r.Age), r.Target(), r.Tags()+r.Name, r.Path)
+		fmt.Fprintf(tw, "%s %s\t%s\t%s\t%s\t%s\t%s\n", ui.Styles[r.State].Glyph, state, ui.Age(r.Age), r.Target(), r.Tags()+r.Name, r.Path, r.Branch)
 	}
 	return tw.Flush()
 }

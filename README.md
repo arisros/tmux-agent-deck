@@ -133,6 +133,7 @@ The screen is only trusted for Claude's explicit markers (its dialogs, the spinn
 | `j` `k`, arrows, wheel | move | move; the wheel scrolls even when unfocused |
 | `g` `G` | top, bottom | top, bottom |
 | `/` | filter | filter |
+| `a` | only the agents that need you (waiting, done) | the same |
 | Enter, `l`, → | jump to the agent, across sessions | jump to the agent |
 | `p`, text, Enter | send a prompt to the agent | the same |
 | `1` to `9` | press that key in a waiting agent's dialog, while its screen is shown | |
@@ -140,6 +141,10 @@ The screen is only trusted for Claude's explicit markers (its dialogs, the spinn
 | `s` | mark a done agent as seen | the same |
 | `x` then `y` | kill the agent's pane | kill the agent's pane |
 | `q`, Esc | close | close the sidebar |
+
+A filter is words that must all match somewhere in the row, or `field:word` for one field: `state:waiting`, `reason:permission`, `agent:codex`, `session:work`, `branch:feat`, `path:`, `name:`, `window:`, `pane:`. Among waiting and done agents the one kept waiting longest comes first. The branch is read from the repository's own files, so no `git` process runs.
+
+`deck list --json --filter 'state:waiting'` prints the same rows for scripts: `pane`, `target`, `state`, `reason`, `agent`, `name`, `path`, `branch`, `session_id`, `age_seconds` and `usage`.
 
 The deck only types into a pane whose agent is still running: tmux checks that in the same call that sends, so a pane that fell back to a shell never receives a prompt as a command. The same actions work from a script with `deck send <pane> <text>` and `deck interrupt <pane>`.
 

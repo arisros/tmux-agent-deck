@@ -43,6 +43,9 @@ type List struct {
 	Draft     string
 	// Reply is what a Send or Answer outcome asks the caller to deliver.
 	Reply string
+	// Attention, toggled with "a", keeps only the agents that need the
+	// user: waiting or done.
+	Attention bool
 	// PreviewOf is the pane whose screen Preview holds; the popup shows it
 	// under the list while that pane is the one under the cursor.
 	PreviewOf string
@@ -63,21 +66,8 @@ type List struct {
 	Now time.Time
 }
 
-// Visible is All narrowed by the filter.
-func (l *List) Visible() []Row {
-	if l.Filter == "" {
-		return l.All
-	}
-	f := strings.ToLower(l.Filter)
-	var out []Row
-	for _, r := range l.All {
-		hay := strings.ToLower(r.Name + " " + r.Target() + " " + r.Path + " " + r.State + " " + r.Reason + " " + r.Agent)
-		if strings.Contains(hay, f) {
-			out = append(out, r)
-		}
-	}
-	return out
-}
+// Visible is All narrowed by the filter and the attention toggle.
+func (l *List) Visible() []Row { return Filter(l.All, l.Filter, l.Attention) }
 
 // Selected is the row under the cursor.
 func (l *List) Selected() (Row, bool) {
@@ -219,6 +209,9 @@ func (l *List) Handle(k Key) Outcome {
 		return Jump
 	case k.Rune == '/':
 		l.Filtering = true
+	case k.Rune == 'a':
+		l.Attention = !l.Attention
+		l.Cursor = 0
 	case k.Rune == 'x':
 		if _, ok := l.Selected(); ok {
 			l.Confirming, l.pending = true, Kill
@@ -257,7 +250,16 @@ func Popup(l *List, w, h int) []string {
 	lines = append(lines, dim+strings.Repeat("─", w)+reset)
 	// " ◆ " + state + age + target + name + ctx + tokens + cost + folder,
 	// one space between columns.
-	nameW := w - 3 - (labelW + 1) - (4 + 1) - (20 + 1) - 1 - (10 + 1) - (7 + 1) - (7 + 1) - 14
+	// The last column is the folder, and grows to hold a branch once any
+	// agent works in a repository.
+	whereW := 14
+	for _, r := range rows {
+		if r.Branch != "" {
+			whereW = 26
+			break
+		}
+	}
+	nameW := w - 3 - (labelW + 1) - (4 + 1) - (20 + 1) - 1 - (10 + 1) - (7 + 1) - (7 + 1) - whereW
 	if nameW < 8 {
 		nameW = 8
 	}
@@ -289,7 +291,7 @@ func Popup(l *List, w, h int) []string {
 			l.marker(r), st.Color, st.Glyph, reset,
 			stateLabel(r), Fit(Age(r.Age), 4), Fit(r.Target(), 20), Fit(name, nameW),
 			UsageCols(r),
-			dim+Fit(filepath.Base(r.Path), 14)+reset)
+			dim+Fit(r.Where(), whereW)+reset)
 		switch {
 		case i == l.Cursor:
 			line = reverse + stripReset(line)
@@ -307,7 +309,7 @@ func Popup(l *List, w, h int) []string {
 	if shown > 0 {
 		lines = append(lines, previewLines(l, w, shown)...)
 	}
-	lines = append(lines, footer(l, w, "enter jump · / filter · p send · 1-9 answer · i interrupt · s seen · x kill · q close"))
+	lines = append(lines, footer(l, w, "enter jump · / filter · a attention · p send · 1-9 answer · i interrupt · s seen · x kill · q close"))
 	return lines
 }
 
@@ -358,7 +360,11 @@ func Sidebar(l *List, others []Row, session string, focused bool, w, h int) []st
 			label = r.Agent + " · " + label
 		}
 		head := l.marker(r) + st.Color + st.Glyph + reset + " " + Fit(label, w-3)
-		detail := r.Window + "." + r.Index + " · " + Age(r.Age) + " · " + filepath.Base(r.Path)
+		where := filepath.Base(r.Path)
+		if r.Branch != "" {
+			where = r.Branch
+		}
+		detail := r.Window + "." + r.Index + " · " + Age(r.Age) + " · " + where
 		if r.Usage != nil && r.Usage.ContextUsed != nil {
 			detail = r.Window + "." + r.Index + " · " + Bar(*r.Usage.ContextUsed, 5) + dim +
 				fmt.Sprintf(" %.0f%%", *r.Usage.ContextUsed) + " · " + Age(r.Age)
@@ -419,6 +425,9 @@ func footer(l *List, w int, help string) string {
 			to = r.Name
 		}
 		return " " + Fit(dim+"to "+to+" > "+reset+l.Draft+"▏", w-1)
+	}
+	if l.Attention && !l.Filtering && l.Filter == "" {
+		help = "needing you only, a for all · " + help
 	}
 	if l.Filtering || l.Filter != "" {
 		cursor := ""

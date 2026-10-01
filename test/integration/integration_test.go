@@ -2,6 +2,7 @@ package integration
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -681,6 +682,46 @@ func TestPopupPreviewsTheSelectedAgent(t *testing.T) {
 		screen := h.tmux("capture-pane", "-p", "-t", popup)
 		return strings.Contains(screen, "permission Bash ──") && strings.Contains(screen, "Do you want to proceed?")
 	}, "the popup to show the waiting agent's dialog")
+}
+
+func TestListFiltersAndReportsBranch(t *testing.T) {
+	h := newHarness(t)
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".git", "HEAD"), []byte("ref: refs/heads/feat/oauth\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a := h.tmux("split-window", "-d", "-t", "alpha", "-c", repo, "-P", "-F", "#{pane_id}", h.fake)
+	b := h.agent("alpha")
+	h.eventually(func() bool { return h.opt(a, "pane_current_command") == "2.1.999" }, "fake claude in the repository")
+	h.hook(a, "UserPromptSubmit", "")
+	h.hook(a, "PermissionRequest", `,"tool_name":"Bash"`)
+	h.hook(b, "UserPromptSubmit", "")
+
+	var items []map[string]any
+	if err := json.Unmarshal([]byte(h.deck("", "list", "--json", "--filter", "state:waiting branch:oauth")), &items); err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("filter kept %d agents, want the one waiting in the repository: %v", len(items), items)
+	}
+	want := map[string]any{"pane": a, "state": "waiting", "reason": "permission Bash", "agent": "claude",
+		"branch": "feat/oauth", "session_id": "sess-" + strings.TrimPrefix(a, "%")}
+	for k, v := range want {
+		if items[0][k] != v {
+			t.Errorf("%s = %v, want %v", k, items[0][k], v)
+		}
+	}
+	for _, k := range []string{"target", "name", "path", "age_seconds"} {
+		if _, ok := items[0][k]; !ok {
+			t.Errorf("JSON lacks %q: %v", k, items[0])
+		}
+	}
+	if out := h.deck("", "list", "--filter", "state:running"); !strings.Contains(out, "running") || strings.Contains(out, "waiting") {
+		t.Errorf("text list with a filter:\n%s", out)
+	}
 }
 
 func TestDoctorReportsAHealthySetup(t *testing.T) {

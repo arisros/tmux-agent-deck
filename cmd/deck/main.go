@@ -32,7 +32,7 @@ views:
   popup                                agents of every session, most urgent first, with the selected one's screen;
                                        enter jumps, p sends a prompt, 1-9 answers a dialog, i interrupts, s marks seen, x kills
   sidebar toggle --session S --window W   this session's agents in a pane that follows you
-  list [--json]                        print the agents and the plan usage
+  list [--json] [--filter TERMS]       print the agents and the plan usage
   events [--pane P] [-n N] [--json]    print the log of state changes, oldest first
 
 act on an agent (only ever a pane whose agent is still running):

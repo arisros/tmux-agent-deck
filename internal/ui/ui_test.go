@@ -477,3 +477,83 @@ func TestInterruptNeedsConfirmationAndSeenNeedsDone(t *testing.T) {
 		t.Errorf("y = %v, want Interrupt", o)
 	}
 }
+
+func TestLongestWaitComesFirst(t *testing.T) {
+	rows := Agents([]tmux.Pane{
+		pane("%1", "a", "1", "waiting", "2.1.284", "✳ asked just now", 9_990),
+		pane("%2", "z", "9", "waiting", "2.1.284", "✳ asked long ago", 9_000),
+		pane("%3", "a", "2", "done", "2.1.284", "✳ finished recently", 9_950),
+		pane("%4", "b", "1", "done", "2.1.284", "✳ finished first", 9_100),
+		// Working agents keep their place: session, then window.
+		pane("%5", "b", "1", "running", "2.1.284", "✳ started first", 9_000),
+		pane("%6", "a", "3", "running", "2.1.284", "✳ started later", 9_900),
+	}, now)
+	var ids []string
+	for _, r := range rows {
+		ids = append(ids, r.ID)
+	}
+	if got := strings.Join(ids, ","); got != "%2,%1,%4,%3,%6,%5" {
+		t.Errorf("order = %s", got)
+	}
+}
+
+func TestFilterByFieldAndAttention(t *testing.T) {
+	ask := pane("%1", "work", "1", "waiting", "2.1.284", "✳ deploy api", 0)
+	ask.Reason = "permission Bash"
+	codex := pane("%2", "work", "2", "running", "node", "✳ running tests", 0)
+	codex.Agent, codex.Cmd = "codex", "node"
+	done := pane("%3", "play", "1", "done", "2.1.284", "✳ state machine notes", 0)
+	rows := Branches(Agents([]tmux.Pane{ask, codex, done}, now), func(dir string) string {
+		return map[string]string{"/work/%1": "main", "/work/%2": "feat/oauth"}[dir]
+	})
+	cases := map[string]string{
+		"":                              "%1,%3,%2",
+		"state:waiting":                 "%1",
+		"state:done":                    "%3",
+		"state":                         "%3", // a bare word is searched everywhere, here in a name
+		"reason:permission":             "%1",
+		"reason:bash":                   "%1",
+		"agent:codex":                   "%2",
+		"agent:claude":                  "%1,%3",
+		"session:work":                  "%1,%2",
+		"branch:feat":                   "%2",
+		"branch:main state:waiting":     "%1",
+		"session:work running":          "%2",
+		"SESSION:WORK State:Running":    "%2",
+		"work:1.0":                      "%1", // a tmux target, not a field
+		"session:work state:done":       "",
+		"path:/work/%3 pane:%3 name:st": "%3",
+	}
+	for filter, want := range cases {
+		var ids []string
+		for _, r := range Filter(rows, filter, false) {
+			ids = append(ids, r.ID)
+		}
+		if got := strings.Join(ids, ","); got != want {
+			t.Errorf("filter %q kept %q, want %q", filter, got, want)
+		}
+	}
+
+	l := &List{All: rows, Cursor: 2}
+	l.Handle(Key{Rune: 'a'})
+	if v := l.Visible(); len(v) != 2 || v[0].ID != "%1" || v[1].ID != "%3" || l.Cursor != 0 {
+		t.Errorf("attention kept %v, cursor %d", v, l.Cursor)
+	}
+	if foot := Popup(l, 160, 12)[11]; !strings.Contains(foot, "needing you only") {
+		t.Errorf("footer does not say the list is narrowed: %q", foot)
+	}
+	l.Handle(Key{Rune: 'a'})
+	if len(l.Visible()) != 3 {
+		t.Error("a second press did not bring every agent back")
+	}
+
+	popup := strings.Join(Popup(l, 160, 12), "\n")
+	for _, want := range []string{"%1@main", "%2@feat/oauth"} {
+		if !strings.Contains(popup, want) {
+			t.Errorf("popup lacks %q:\n%s", want, popup)
+		}
+	}
+	if side := strings.Join(Sidebar(l, nil, "work", false, 40, 16), "\n"); !strings.Contains(side, " · feat/oauth") {
+		t.Errorf("sidebar lacks the branch:\n%s", side)
+	}
+}
