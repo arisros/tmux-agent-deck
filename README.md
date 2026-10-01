@@ -1,6 +1,6 @@
 <h1 align="center">tmux-agent-deck</h1>
 
-<p align="center">See which Claude Code agents need you, which have finished, and which are still working, across every tmux session.</p>
+<p align="center">An agent control plane for tmux: see which coding agents need you and why, answer them from where you are, and script them. Claude Code, Codex, Gemini CLI and opencode, across every session.</p>
 
 <p align="center">
   <a href="https://github.com/arisros/tmux-agent-deck/actions/workflows/ci.yml"><img src="https://github.com/arisros/tmux-agent-deck/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
@@ -15,7 +15,7 @@
 
 ## Quickstart
 
-Needs tmux 3.2+ and Claude Code (on 3.2 the popup has no border style or title). Go 1.26+ is optional: without it, the plugin downloads a release binary and checks its checksum.
+Needs tmux 3.2+ and Claude Code; the other agents are under [Agents](#agents). On tmux 3.2 the popup has no border style or title. Go 1.26+ is optional: without it, the plugin downloads a release binary and checks its checksum.
 
 ```tmux
 # ~/.tmux.conf (or ~/.config/tmux/tmux.conf), then prefix I
@@ -273,11 +273,16 @@ Integration tests start their own `tmux -L deck-test-*` servers and never touch 
 - [x] popup across sessions, sidebar per session, tab and border icons
 - [x] token usage and plan limits from the statusLine
 - [x] release binaries with a checksummed download in the tpm entrypoint
-- [ ] why an agent is waiting (permission, question), and a log of state changes
-- [ ] clear agents whose Claude has exited, and a stricter `deck doctor`
-- [ ] a command to run when an agent needs you
+- [x] why an agent is waiting, and a log of state changes
+- [x] agents that exited are cleared, and a stricter `deck doctor`
+- [x] a command to run when an agent needs you
+- [x] tmux 3.2, tested in CI next to 3.3
+- [x] Codex, Gemini CLI and opencode
+- [x] a preview you can answer from, `deck send`, `deck wait`, `deck events --follow`
+- [ ] recorded sessions for Codex, Gemini CLI and opencode, to replace what was read from their documentation
+- [ ] recordings of the Claude Code cases still missing: resume, compaction, a crash, a failed tool, an elicitation
 
-Then a tested tmux floor, Codex, and a preview you can answer from. The full order, the rules every change keeps, and what was declined: [docs/roadmap.md](docs/roadmap.md).
+What is left, the rules every change keeps, what was declined and why, and the non-goals: [docs/roadmap.md](docs/roadmap.md).
 
 ## Prior art
 
