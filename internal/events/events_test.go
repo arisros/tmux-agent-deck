@@ -62,6 +62,34 @@ func TestWriterRotatesOnlyWhenASessionBegins(t *testing.T) {
 	}
 }
 
+func TestReadFromContinuesAndSurvivesRotation(t *testing.T) {
+	root := t.TempDir()
+	if got, off, err := ReadFrom(root, 0); err != nil || len(got) != 0 || off != 0 {
+		t.Fatalf("no log yet: %v %d %v", got, off, err)
+	}
+	_ = Append(root, Event{TS: 1, Kind: "Prompt", To: "running"})
+	off := Size(root)
+	_ = Append(root, Event{TS: 2, Kind: "Stop", To: "done"})
+	// A line still being written is not an event yet.
+	f, _ := os.OpenFile(Path(root), os.O_WRONLY|os.O_APPEND, 0o600)
+	_, _ = f.WriteString(`{"ts":3,"event":"Half`)
+	got, next, err := ReadFrom(root, off)
+	if err != nil || len(got) != 1 || got[0].Kind != "Stop" {
+		t.Fatalf("ReadFrom = %+v %v", got, err)
+	}
+	_, _ = f.WriteString("way\"}\n")
+	f.Close()
+	if got, _, _ := ReadFrom(root, next); len(got) != 1 || got[0].Kind != "Halfway" {
+		t.Errorf("the finished line was lost: %+v", got)
+	}
+	// Rotation replaces the file with a shorter one.
+	_ = os.Rename(Path(root), Path(root)+".1")
+	_ = Append(root, Event{TS: 4, Kind: Begin, To: "idle"})
+	if got, _, _ := ReadFrom(root, next+100); len(got) != 1 || got[0].Kind != Begin {
+		t.Errorf("after rotation: %+v", got)
+	}
+}
+
 func TestReadWithoutALog(t *testing.T) {
 	got, err := Read(t.TempDir())
 	if err != nil || len(got) != 0 {

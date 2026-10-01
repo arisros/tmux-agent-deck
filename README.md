@@ -146,6 +146,18 @@ A filter is words that must all match somewhere in the row, or `field:word` for 
 
 `deck list --json --filter 'state:waiting'` prints the same rows for scripts: `pane`, `target`, `state`, `reason`, `agent`, `name`, `path`, `branch`, `session_id`, `age_seconds` and `usage`.
 
+A script can drive an agent with the same pieces, and none of them polls: they sleep inside tmux until a hook fires.
+
+```sh
+pane=%12
+deck send "$pane" "run the migration tests and fix what fails"
+case "$(deck wait --timeout 30m "$pane")" in
+waiting) deck list --json --filter "pane:$pane" | jq -r '.[0].reason' ;;  # it needs an answer
+done|idle) echo finished ;;
+esac
+deck events --follow --json | jq -r 'select(.to == "waiting") | .pane'   # every agent that starts waiting
+```
+
 The deck only types into a pane whose agent is still running: tmux checks that in the same call that sends, so a pane that fell back to a shell never receives a prompt as a command. The same actions work from a script with `deck send <pane> <text>` and `deck interrupt <pane>`.
 
 The sidebar keeps its place as the full-height left column: it follows you to other windows, comes back after `swap-pane`, `rotate-window` or a layout change, restores its width when squeezed, and leaves a window once it is the only pane left.

@@ -1,6 +1,8 @@
 package integration
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -885,6 +887,79 @@ await ev("session.idle", { sessionID: main })
 	h.deck("", "uninstall", "--opencode", "--apply", "--settings", plugin)
 	if _, err := os.Stat(plugin); !os.IsNotExist(err) {
 		t.Errorf("uninstall left the plugin: %v", err)
+	}
+}
+
+func TestEventsFollowAndWait(t *testing.T) {
+	h := newHarness(t)
+	a := h.agent("alpha")
+	h.hook(a, "UserPromptSubmit", "")
+
+	follow := exec.Command(h.bin, "events", "--follow", "--json", "--pane", a)
+	follow.Env = h.env("")
+	stdout, err := follow.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := follow.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = follow.Process.Kill(); _ = follow.Wait() }()
+	lines := make(chan string, 16)
+	go func() {
+		sc := bufio.NewScanner(stdout)
+		for sc.Scan() {
+			lines <- sc.Text()
+		}
+		close(lines)
+	}()
+	next := func(want string) {
+		t.Helper()
+		select {
+		case line := <-lines:
+			if !strings.Contains(line, want) {
+				t.Fatalf("followed event %q lacks %q", line, want)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("no event containing %q arrived", want)
+		}
+	}
+	next(`"to":"running"`) // the history comes first
+
+	// A script waits for the agent to need it, while the agent works.
+	wait := exec.Command(h.bin, "wait", "--timeout", "10s", a)
+	wait.Env = h.env("")
+	var waited bytes.Buffer
+	wait.Stdout, wait.Stderr = &waited, &waited
+	if err := wait.Start(); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(300 * time.Millisecond)
+	if wait.ProcessState != nil {
+		t.Fatalf("wait returned while the agent was running: %s", waited.String())
+	}
+	h.hook(a, "PermissionRequest", `,"tool_name":"Bash"`)
+	next(`"to":"waiting"`)
+	if err := wait.Wait(); err != nil || strings.TrimSpace(waited.String()) != "waiting" {
+		t.Fatalf("wait = %v %q, want it to print waiting", err, waited.String())
+	}
+	h.hook(a, "PostToolUse", "")
+	next(`"to":"running"`)
+
+	// Already in a wanted state: returns at once.
+	if out := h.deck("", "wait", "--state", "running", a); strings.TrimSpace(out) != "running" {
+		t.Errorf("wait --state running = %q", out)
+	}
+	for _, args := range [][]string{
+		{"wait", "--state", "done", "--timeout", "300ms", a}, // never gets there
+		{"wait", "--state", "sleeping", a},
+		{"wait", "%999"},
+	} {
+		cmd := exec.Command(h.bin, args...)
+		cmd.Env = h.env("")
+		if out, err := cmd.CombinedOutput(); err == nil {
+			t.Errorf("deck %v succeeded: %s", args, out)
+		}
 	}
 }
 

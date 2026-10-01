@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 )
@@ -83,6 +84,50 @@ func Writer(root string) func(Event) {
 		}
 		_ = Append(root, e)
 	}
+}
+
+// ReadFrom returns the events appended to the current log after byte offset,
+// and the offset to pass next time. A log shorter than offset has been
+// rotated, and is read from its start. A last line still being written is
+// left for the next call.
+func ReadFrom(root string, offset int64) ([]Event, int64, error) {
+	f, err := os.Open(Path(root))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, 0, nil
+	}
+	if err != nil {
+		return nil, offset, err
+	}
+	defer f.Close()
+	if fi, err := f.Stat(); err == nil && fi.Size() < offset {
+		offset = 0
+	}
+	if _, err := f.Seek(offset, io.SeekStart); err != nil {
+		return nil, offset, err
+	}
+	var out []Event
+	r := bufio.NewReader(f)
+	for {
+		line, err := r.ReadBytes('\n')
+		if err != nil {
+			break
+		}
+		offset += int64(len(line))
+		var e Event
+		if json.Unmarshal(line, &e) == nil && e.Kind != "" {
+			out = append(out, e)
+		}
+	}
+	return out, offset, nil
+}
+
+// Size is the current log's length, the offset ReadFrom continues from.
+func Size(root string) int64 {
+	fi, err := os.Stat(Path(root))
+	if err != nil {
+		return 0
+	}
+	return fi.Size()
 }
 
 // Read returns the previous log followed by the current one, oldest first.

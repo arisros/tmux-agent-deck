@@ -33,11 +33,14 @@ views:
                                        enter jumps, p sends a prompt, 1-9 answers a dialog, i interrupts, s marks seen, x kills
   sidebar toggle --session S --window W   this session's agents in a pane that follows you
   list [--json] [--filter TERMS]       print the agents and the plan usage
-  events [--pane P] [-n N] [--json]    print the log of state changes, oldest first
+  events [--pane P] [-n N] [--json] [--follow]
+                                       print the log of state changes, oldest first; --follow keeps printing
 
 act on an agent (only ever a pane whose agent is still running):
   send [--no-enter] <pane> [text...]   type a prompt into the agent and submit it; text from stdin when omitted
   interrupt <pane>                     stop the agent's turn, as Esc in its pane would
+  wait [--state S,S] [--timeout D] <pane>
+                                       block until the agent is waiting, done or idle (or the states given), print which
 
 setup:
   install --claude [--record] [--wrap-statusline] [--apply] [--settings FILE]
@@ -77,6 +80,7 @@ var commands = map[string]func(args []string) error{
 	"events":    runEvents,
 	"send":      func(a []string) error { return runSend(a, os.Stdin) },
 	"interrupt": runInterrupt,
+	"wait":      runWait,
 	"tmux-init": runTmuxInit,
 	"install":   func(a []string) error { return runInstall(a, true) },
 	"uninstall": func(a []string) error { return runInstall(a, false) },
