@@ -70,11 +70,65 @@ func act(d *deck.Deck, c tmux.Client, l *ui.List, o ui.Outcome) bool {
 		if len(l.Reply) == 1 && l.Reply[0] >= '1' && l.Reply[0] <= '9' {
 			_ = sendKey(c, r.ID, l.Reply)
 		}
+	case ui.Copy:
+		if n, err := copyOutput(c, r.ID); err != nil {
+			l.Note = "copy failed: " + err.Error()
+		} else {
+			l.Note = fmt.Sprintf("copied %d lines of %s to the tmux buffer (prefix ])", n, r.Name)
+		}
+	case ui.Rename:
+		_ = rename(c, r.ID, l.Reply)
 	default:
 		return false
 	}
 	l.Reply = ""
 	return true
+}
+
+// copyLines is how much of an agent's history "y" copies.
+const copyLines = 2000
+
+// copyOutput puts the end of a pane's history and its screen into the tmux
+// paste buffer, and into the system clipboard where tmux can reach it. It
+// returns the number of lines copied.
+func copyOutput(c tmux.Client, pane string) (int, error) {
+	out, err := c.Run("capture-pane", "-p", "-J", "-S", fmt.Sprintf("-%d", copyLines), "-t", pane)
+	if err != nil {
+		return 0, err
+	}
+	out = strings.TrimRight(out, "\n ") + "\n"
+	if _, err := c.RunInput(out, "load-buffer", "-w", "-"); err != nil {
+		return 0, err
+	}
+	return strings.Count(out, "\n"), nil
+}
+
+// rename labels an agent's pane; an empty name removes the label, and the
+// agent shows its own title again. The label stays with the pane.
+func rename(c tmux.Client, pane, name string) error {
+	name = strings.Map(func(r rune) rune {
+		if r < ' ' || r == 0x7f {
+			return ' ' // a tab would split the pane listing
+		}
+		return r
+	}, name)
+	// tmux reads an argument that ends in ";" as the end of a command.
+	name = strings.TrimSpace(strings.TrimRight(strings.TrimSpace(name), ";"))
+	args := []string{"set-option", "-p", "-t", pane, "@deck_name", name}
+	if name == "" {
+		args = []string{"set-option", "-p", "-u", "-t", pane, "@deck_name"}
+	}
+	return c.Batch([][]string{args, {"wait-for", "-S", deck.Signal}})
+}
+
+func runRename(args []string) error {
+	if len(args) < 1 {
+		return errors.New("usage: deck rename <pane> [name...]  (no name removes the label)")
+	}
+	if !strings.HasPrefix(args[0], "%") {
+		return fmt.Errorf("%q is not a pane id such as %%12 (see deck list)", args[0])
+	}
+	return rename(tmux.FromEnv(), args[0], strings.Join(args[1:], " "))
 }
 
 func runSend(args []string, stdin io.Reader) error {

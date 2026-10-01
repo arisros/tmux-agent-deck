@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/arisros/tmux-agent-deck/internal/deck"
+	"github.com/arisros/tmux-agent-deck/internal/events"
 	"github.com/arisros/tmux-agent-deck/internal/git"
 	"github.com/arisros/tmux-agent-deck/internal/store"
 	"github.com/arisros/tmux-agent-deck/internal/tmux"
@@ -85,17 +86,19 @@ func runPopup(args []string) (err error) {
 	// with #{...} unexpanded, and the shell then drops the rest of the line
 	// as a comment. From inside the popup, tmux resolves the client that
 	// opened it and the pane that client is in.
-	client, current := "", ""
-	if out, err := c.Run("display-message", "-p", "#{client_name}\t#{pane_id}"); err == nil {
-		if f := strings.SplitN(strings.TrimSpace(out), "\t", 2); len(f) == 2 {
-			client, current = f[0], f[1]
+	client, current, attention := "", "", false
+	if out, err := c.Run("display-message", "-p", "#{client_name}\t#{pane_id}\t#{@deck-popup-attention}"); err == nil {
+		if f := strings.Split(strings.TrimRight(out, "\n"), "\t"); len(f) == 3 {
+			client, current, attention = f[0], f[1], f[2] == "on"
 		}
 	}
 	_, rows, limits, err := agents(d, c, true)
 	if err != nil {
 		return err
 	}
-	l := &ui.List{All: rows, Current: current, Limits: limits}
+	// @deck-popup-attention opens the popup on the agents that need you;
+	// "a" still shows the rest.
+	l := &ui.List{All: rows, Current: current, Limits: limits, Attention: attention}
 
 	t, err := ui.OpenTerm()
 	if err != nil {
@@ -179,6 +182,34 @@ func preview(c tmux.Client, l *ui.List) {
 		screen = ""
 	}
 	l.SetPreview(r.ID, screen)
+	l.Timeline = timeline(r)
+}
+
+// timeline is the selected agent's last state changes, one line each. A
+// pane id is reused by later sessions, so the session decides when known.
+func timeline(r ui.Row) []string {
+	all, err := events.Read(store.Root())
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range all {
+		if e.Pane != r.ID || (r.SID != "" && e.SID != "" && e.SID != r.SID) {
+			continue
+		}
+		line := time.UnixMilli(e.TS).Format("15:04:05") + "  " + dash(e.From) + " -> " + dash(e.To) + "  " + e.Kind
+		if e.Source != "" && e.Source != "hook" {
+			line += " (" + e.Source + ")"
+		}
+		if why := strings.TrimSpace(e.Reason + " " + e.Tool); why != "" {
+			line += "  " + why
+		}
+		out = append(out, line)
+	}
+	if len(out) > 8 {
+		out = out[len(out)-8:]
+	}
+	return out
 }
 
 func refresh(d *deck.Deck, c tmux.Client, l *ui.List, repair bool) {
@@ -488,6 +519,7 @@ func runList(args []string) error {
 			Path       string         `json:"path"`
 			Branch     string         `json:"branch,omitempty"`
 			SessionID  string         `json:"session_id,omitempty"`
+			StartedAt  int64          `json:"started_at,omitempty"`
 			AgeSeconds int64          `json:"age_seconds"`
 			Usage      *usage.Session `json:"usage,omitempty"`
 		}
@@ -497,7 +529,7 @@ func runList(args []string) error {
 			if name == "" {
 				name = "claude"
 			}
-			out = append(out, item{r.ID, r.Target(), r.State, r.Reason, name, r.Name, r.Path, r.Branch, r.SID,
+			out = append(out, item{r.ID, r.Target(), r.State, r.Reason, name, r.Name, r.Path, r.Branch, r.SID, r.Started,
 				int64(r.Age.Seconds()), r.Usage})
 		}
 		enc := json.NewEncoder(os.Stdout)

@@ -94,11 +94,11 @@ func (d *Deck) Hook(p hook.Payload, pane string) error {
 		if err != nil {
 			return err
 		}
-		if err := l.Save(store.Record{Pane: pane, Agent: a.Name, Snapshot: res.Snapshot}); err != nil {
+		if err := l.Save(store.Record{Pane: pane, Agent: a.Name, Started: now, Snapshot: res.Snapshot}); err != nil {
 			return err
 		}
 		d.emitResult(events.Begin, p.SessionID, pane, res)
-		return d.publish(pane, p.SessionID, a.Name, res, "")
+		return d.publish(pane, p.SessionID, a.Name, res, "", now)
 	}
 
 	var snap []byte
@@ -109,7 +109,13 @@ func (d *Deck) Hook(p hook.Payload, pane string) error {
 	if err != nil {
 		return err
 	}
-	if err := l.Save(store.Record{Pane: pane, Agent: a.Name, Snapshot: res.Snapshot}); err != nil {
+	// A session the deck first hears from mid-flight started, as far as it
+	// knows, now.
+	started, fresh := rec.Started, int64(0)
+	if !existed {
+		started, fresh = now, now
+	}
+	if err := l.Save(store.Record{Pane: pane, Agent: a.Name, Started: started, Snapshot: res.Snapshot}); err != nil {
 		return err
 	}
 	if res.From != res.To {
@@ -127,7 +133,7 @@ func (d *Deck) Hook(p hook.Payload, pane string) error {
 	case res.Entered(machine.Done) && isStop(ev):
 		sound = "done"
 	}
-	return d.publish(pane, p.SessionID, a.Name, res, sound)
+	return d.publish(pane, p.SessionID, a.Name, res, sound, fresh)
 }
 
 func isStop(e machine.Event) bool { _, ok := e.(machine.Stop); return ok }
@@ -319,7 +325,7 @@ func (d *Deck) send(pane, sid string, ev machine.Event) error {
 	if res.From == res.To {
 		return nil
 	}
-	if err := l.Save(store.Record{Pane: rec.Pane, Agent: rec.Agent, Snapshot: res.Snapshot}); err != nil {
+	if err := l.Save(store.Record{Pane: rec.Pane, Agent: rec.Agent, Started: rec.Started, Snapshot: res.Snapshot}); err != nil {
 		return err
 	}
 	d.emitResult(ev.EventName(), sid, pane, res)
@@ -327,7 +333,7 @@ func (d *Deck) send(pane, sid string, ev machine.Event) error {
 	if name == "" {
 		name = agent.Claude.Name
 	}
-	return d.publish(pane, sid, name, res, "")
+	return d.publish(pane, sid, name, res, "", 0)
 }
 
 func (d *Deck) emitResult(kind, sid, pane string, res machine.Result) {
@@ -363,7 +369,9 @@ func reason(c machine.Ctx) string {
 	return c.Reason + " " + c.Tool
 }
 
-func (d *Deck) publish(pane, sid, name string, res machine.Result, sound string) error {
+// publish writes a session's state to its pane. started, when not zero, is
+// also written: it only changes when a session begins.
+func (d *Deck) publish(pane, sid, name string, res machine.Result, sound string, started int64) error {
 	if pane == "" {
 		return nil
 	}
@@ -374,6 +382,9 @@ func (d *Deck) publish(pane, sid, name string, res machine.Result, sound string)
 		{"set-option", "-p", "-t", pane, "@deck_agent", name},
 	}
 	cmds = append(cmds, remember(pane))
+	if started > 0 {
+		cmds = append(cmds, []string{"set-option", "-p", "-t", pane, "@deck_started", strconv.FormatInt(started, 10)})
+	}
 	if why := reason(res.Ctx); why != "" {
 		cmds = append(cmds, []string{"set-option", "-p", "-t", pane, "@deck_reason", why})
 	} else {
@@ -404,7 +415,7 @@ func clear(pane string) [][]string {
 
 func unset(pane string) [][]string {
 	var cmds [][]string
-	for _, o := range []string{"@deck_state", "@deck_since", "@deck_sid", "@deck_reason", "@deck_cmd", "@deck_agent"} {
+	for _, o := range []string{"@deck_state", "@deck_since", "@deck_sid", "@deck_reason", "@deck_cmd", "@deck_agent", "@deck_started"} {
 		cmds = append(cmds, []string{"set-option", "-p", "-u", "-t", pane, o})
 	}
 	return cmds

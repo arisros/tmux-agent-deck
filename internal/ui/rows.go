@@ -207,9 +207,12 @@ func Agents(panes []tmux.Pane, now time.Time) []Row {
 
 func num(s string) int { n, _ := strconv.Atoi(s); return n }
 
-// name is Claude's session title from the terminal title, without the status
-// glyph Claude prefixes; the folder when there is no title yet.
+// name is the label the user gave, else the agent's session title from the
+// terminal title without the status glyph Claude prefixes, else the folder.
 func name(p tmux.Pane) string {
+	if p.Label != "" {
+		return p.Label
+	}
 	t := strings.TrimLeftFunc(p.Title, func(r rune) bool {
 		return unicode.IsSpace(r) || (r > 0x2000 && !unicode.IsLetter(r) && !unicode.IsDigit(r))
 	})

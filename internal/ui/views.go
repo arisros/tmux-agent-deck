@@ -41,8 +41,15 @@ type List struct {
 	// the agent under the cursor, or esc drops it.
 	Composing bool
 	Draft     string
-	// Reply is what a Send or Answer outcome asks the caller to deliver.
+	// Renaming is set after "r": keys go to Draft until enter names the
+	// agent under the cursor, an empty name giving it back its own title.
+	Renaming bool
+	// Reply is what a Send, Answer or Rename outcome asks the caller to deliver.
 	Reply string
+	// Note is a one-line result of the last action, shown until the next key.
+	Note string
+	// Timeline is the recent state changes of the previewed agent.
+	Timeline []string
 	// Attention, toggled with "a", keeps only the agents that need the
 	// user: waiting or done.
 	Attention bool
@@ -115,6 +122,10 @@ const (
 	Send
 	// Answer presses the one key in List.Reply in the agent's dialog.
 	Answer
+	// Copy puts the agent's recent output in the tmux paste buffer.
+	Copy
+	// Rename labels the agent List.Reply; empty removes the label.
+	Rename
 )
 
 // SetPreview stores pane's screen for the popup to show, without the blank
@@ -147,6 +158,7 @@ func (l *List) Handle(k Key) Outcome {
 		return Stay
 	}
 	l.scrolled = false
+	l.Note = ""
 	if l.Confirming {
 		l.Confirming = false
 		if k.Rune == 'y' || k.Rune == 'Y' {
@@ -154,16 +166,20 @@ func (l *List) Handle(k Key) Outcome {
 		}
 		return Stay
 	}
-	if l.Composing {
+	if l.Composing || l.Renaming {
 		switch {
 		case k.Name == "enter":
-			l.Composing = false
+			renaming := l.Renaming
+			l.Composing, l.Renaming = false, false
 			l.Reply, l.Draft = l.Draft, ""
+			if renaming {
+				return Rename
+			}
 			if l.Reply != "" {
 				return Send
 			}
 		case k.Name == "esc":
-			l.Composing, l.Draft = false, ""
+			l.Composing, l.Renaming, l.Draft = false, false, ""
 		case k.Name == "backspace":
 			if r := []rune(l.Draft); len(r) > 0 {
 				l.Draft = string(r[:len(r)-1])
@@ -227,6 +243,14 @@ func (l *List) Handle(k Key) Outcome {
 	case k.Rune == 'p':
 		if _, ok := l.Selected(); ok {
 			l.Composing = true
+		}
+	case k.Rune == 'r':
+		if r, ok := l.Selected(); ok {
+			l.Renaming, l.Draft = true, r.Label
+		}
+	case k.Rune == 'y':
+		if _, ok := l.Selected(); ok {
+			return Copy
 		}
 	case k.Rune >= '1' && k.Rune <= '9':
 		if r, ok := l.Selected(); ok && r.State == machine.Waiting && l.previewing() {
@@ -309,7 +333,7 @@ func Popup(l *List, w, h int) []string {
 	if shown > 0 {
 		lines = append(lines, previewLines(l, w, shown)...)
 	}
-	lines = append(lines, footer(l, w, "enter jump · / filter · a attention · p send · 1-9 answer · i interrupt · s seen · x kill · q close"))
+	lines = append(lines, footer(l, w, "enter jump · / filter · a attention · p send · 1-9 answer · i interrupt · s seen · y copy · r rename · x kill · q close"))
 	return lines
 }
 
@@ -323,10 +347,27 @@ func previewLines(l *List, w, n int) []string {
 		if r.State == machine.Waiting && r.Reason != "" {
 			title += "· " + r.Reason + " "
 		}
+		if r.Started > 0 {
+			title += "· session " + Age(l.now().Sub(time.Unix(r.Started, 0))) + " "
+		}
 	}
 	out := []string{dim + Fit("──"+title+strings.Repeat("─", w), w) + reset}
-	if len(screen) > n-1 {
-		screen = screen[len(screen)-(n-1):]
+	// The last few state changes sit above the screen, when there is room
+	// for both.
+	if l.previewing() && n >= 12 {
+		recent := l.Timeline
+		if len(recent) > 4 {
+			recent = recent[len(recent)-4:]
+		}
+		for _, line := range recent {
+			out = append(out, dim+Fit(" "+line, w)+reset)
+		}
+		if len(recent) > 0 {
+			out = append(out, dim+" "+strings.Repeat("┄", w-1)+reset)
+		}
+	}
+	if room := n - len(out); len(screen) > room {
+		screen = screen[len(screen)-room:]
 	}
 	for _, line := range screen {
 		out = append(out, Fit(" "+strings.ReplaceAll(line, "\t", " "), w))
@@ -401,7 +442,7 @@ func Sidebar(l *List, others []Row, session string, focused bool, w, h int) []st
 		other = "other sessions: none"
 	}
 	lines = append(lines, " "+Fit(other, w-1))
-	help := "enter · p send · i · s · x · q"
+	help := "enter · p send · i · s · y · r · x · q"
 	if !focused {
 		help = "C-h to pick"
 	}
@@ -425,6 +466,12 @@ func footer(l *List, w int, help string) string {
 			to = r.Name
 		}
 		return " " + Fit(dim+"to "+to+" > "+reset+l.Draft+"▏", w-1)
+	}
+	if l.Renaming {
+		return " " + Fit(dim+"name (empty to reset) > "+reset+l.Draft+"▏", w-1)
+	}
+	if l.Note != "" {
+		return " " + Fit(l.Note, w-1)
 	}
 	if l.Attention && !l.Filtering && l.Filter == "" {
 		help = "needing you only, a for all · " + help

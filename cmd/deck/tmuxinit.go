@@ -89,12 +89,13 @@ const hookIndex = "[77]"
 
 func defaults() map[string]string {
 	d := map[string]string{
-		"@deck-popup-key":     "a",
-		"@deck-sidebar-key":   "e",
-		"@deck-sidebar-width": defaultSidebarWidth,
-		"@deck-sound":         "on",
-		"@deck-tab-pulse":     "off",
-		"@deck-sidebar-pin":   "on",
+		"@deck-popup-key":       "a",
+		"@deck-sidebar-key":     "e",
+		"@deck-sidebar-width":   defaultSidebarWidth,
+		"@deck-sound":           "on",
+		"@deck-tab-pulse":       "off",
+		"@deck-sidebar-pin":     "on",
+		"@deck-popup-attention": "off",
 	}
 	if runtime.GOOS == "darwin" {
 		d["@deck-sound-command"] = "afplay"

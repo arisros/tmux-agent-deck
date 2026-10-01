@@ -700,7 +700,7 @@ func TestPopupPreviewsTheSelectedAgent(t *testing.T) {
 	popup := h.tmux("new-window", "-d", "-P", "-F", "#{pane_id}", h.bin+" popup")
 	h.eventually(func() bool {
 		screen := h.tmux("capture-pane", "-p", "-t", popup)
-		return strings.Contains(screen, "permission Bash ──") && strings.Contains(screen, "Do you want to proceed?")
+		return strings.Contains(screen, "· permission Bash ·") && strings.Contains(screen, "Do you want to proceed?")
 	}, "the popup to show the waiting agent's dialog")
 }
 
@@ -978,6 +978,71 @@ func TestEventsFollowAndWait(t *testing.T) {
 		if out, err := cmd.CombinedOutput(); err == nil {
 			t.Errorf("deck %v succeeded: %s", args, out)
 		}
+	}
+}
+
+func TestRenameCopyTimelineAndAttention(t *testing.T) {
+	h := newHarness(t)
+	a := h.tmux("split-window", "-d", "-t", "alpha", "-P", "-F", "#{pane_id}",
+		`printf 'unique-output-line\nDo you want to proceed?\n  1. Yes\n'; exec `+h.fake)
+	quiet := h.agent("alpha")
+	h.eventually(func() bool { return h.opt(a, "pane_current_command") == "2.1.999" }, "fake claude")
+	h.hook(a, "SessionStart", `,"source":"startup"`)
+	h.hook(a, "UserPromptSubmit", "")
+	h.hook(a, "PermissionRequest", `,"tool_name":"Bash"`)
+	h.hook(quiet, "SessionStart", `,"source":"startup"`)
+
+	if got := h.opt(a, "@deck_started"); got == "" {
+		t.Error("the session's start was not recorded")
+	}
+	var items []map[string]any
+	if err := json.Unmarshal([]byte(h.deck("", "list", "--json", "--filter", "pane:"+a)), &items); err != nil || len(items) != 1 {
+		t.Fatalf("list: %v %v", err, items)
+	}
+	if at, _ := items[0]["started_at"].(float64); at < 1 {
+		t.Errorf("started_at = %v", items[0]["started_at"])
+	}
+
+	// A label with what would end a tmux command, or split the pane listing.
+	h.deck("", "rename", a, "billing\tfix ; kill-server;")
+	if got := h.opt(a, "@deck_name"); got != "billing fix ; kill-server" {
+		t.Errorf("@deck_name = %q", got)
+	}
+	if out := h.deck("", "list"); !strings.Contains(out, "billing fix ; kill-server") || !strings.Contains(out, "idle") {
+		t.Errorf("list after rename:\n%s", out)
+	}
+	h.deck("", "rename", a, "billing")
+
+	// The popup opens on the agents that need you when the option says so,
+	// with the selected one's last state changes above its screen.
+	h.tmux("set-option", "-g", "@deck-popup-attention", "on")
+	h.tmux("set-environment", "-g", "DECK_TMUX_SOCKET", h.socket)
+	popup := h.tmux("new-window", "-d", "-P", "-F", "#{pane_id}", h.bin+" popup")
+	var screen string
+	h.eventually(func() bool {
+		screen = h.tmux("capture-pane", "-p", "-t", popup)
+		return strings.Contains(screen, "── billing · permission Bash ·") && strings.Contains(screen, "running -> waiting") &&
+			strings.Contains(screen, "Do you want to proceed?")
+	}, "the popup to show the label, the timeline and the screen")
+	if strings.Contains(screen, "alpha:0."+h.opt(quiet, "pane_index")+" ") || !strings.Contains(screen, "needing you only") {
+		t.Errorf("the popup did not open on the agents that need you:\n%s", screen)
+	}
+
+	h.tmux("send-keys", "-t", popup, "y")
+	h.eventually(func() bool {
+		// show-buffer fails until there is a buffer.
+		out, _ := exec.Command("tmux", "-L", h.socket, "show-buffer").Output()
+		return strings.Contains(string(out), "unique-output-line")
+	}, "the agent's output in the paste buffer")
+	h.eventually(func() bool { return strings.Contains(h.tmux("capture-pane", "-p", "-t", popup), "copied ") }, "the popup to say it copied")
+
+	h.tmux("send-keys", "-t", popup, "r")
+	h.tmux("send-keys", "-t", popup, "-l", " v2")
+	h.tmux("send-keys", "-t", popup, "Enter")
+	h.eventually(func() bool { return h.opt(a, "@deck_name") == "billing v2" }, "the rename from the popup")
+	h.deck("", "rename", a)
+	if got := h.opt(a, "@deck_name"); got != "" {
+		t.Errorf("label not removed: %q", got)
 	}
 }
 

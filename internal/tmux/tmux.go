@@ -142,7 +142,11 @@ type Pane struct {
 	// Cmd is the pane's foreground command when a hook last fired there.
 	Cmd string
 	// Agent names the agent in the pane: "claude", "codex".
-	Agent                              string
+	Agent string
+	// Label is the name the user gave the agent with "r" or deck rename.
+	Label string
+	// Started is when the deck first heard from the session, unix seconds.
+	Started                            int64
 	Since                              int64
 	PaneActive, WindowActive, Attached bool
 	WindowPanes                        int
@@ -153,7 +157,7 @@ var paneFields = []string{
 	"#{window_name}", "#{pane_current_command}", "#{pane_title}", "#{pane_current_path}",
 	"#{@deck_state}", "#{@deck_sid}", "#{@deck_sidebar}", "#{@deck_since}",
 	"#{pane_active}", "#{window_active}", "#{session_attached}", "#{window_panes}",
-	"#{@deck_reason}", "#{@deck_cmd}", "#{@deck_agent}",
+	"#{@deck_reason}", "#{@deck_cmd}", "#{@deck_agent}", "#{@deck_started}", "#{@deck_name}",
 }
 
 // sep must survive tmux's output escaping: tmux prints control characters
@@ -178,6 +182,7 @@ func ParsePanes(out string) []Pane {
 			continue
 		}
 		since, _ := strconv.ParseInt(f[13], 10, 64)
+		started, _ := strconv.ParseInt(f[21], 10, 64)
 		attached, _ := strconv.Atoi(f[16])
 		windowPanes, _ := strconv.Atoi(f[17])
 		panes = append(panes, Pane{
@@ -185,7 +190,7 @@ func ParsePanes(out string) []Pane {
 			WindowName: f[6], Command: f[7], Title: f[8], Path: f[9],
 			State: f[10], SID: f[11], Sidebar: f[12], Since: since,
 			PaneActive: f[14] == "1", WindowActive: f[15] == "1", Attached: attached > 0,
-			WindowPanes: windowPanes, Reason: f[18], Cmd: f[19], Agent: f[20],
+			WindowPanes: windowPanes, Reason: f[18], Cmd: f[19], Agent: f[20], Started: started, Label: f[22],
 		})
 	}
 	return panes

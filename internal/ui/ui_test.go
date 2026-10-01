@@ -557,3 +557,65 @@ func TestFilterByFieldAndAttention(t *testing.T) {
 		t.Errorf("sidebar lacks the branch:\n%s", side)
 	}
 }
+
+func TestRenameCopyAndTimeline(t *testing.T) {
+	p := pane("%1", "a", "1", "waiting", "2.1.284", "✳ a long generated title", 0)
+	p.Reason, p.Started = "question", now.Unix()-2*3600
+	l := &List{All: Agents([]tmux.Pane{p}, now), Now: now}
+
+	if o := l.Handle(Key{Rune: 'y'}); o != Copy {
+		t.Errorf("y = %v, want Copy", o)
+	}
+	l.Note = "copied 12 lines"
+	if foot := Popup(l, 90, 10)[9]; !strings.Contains(foot, "copied 12 lines") {
+		t.Errorf("footer does not show the note: %q", foot)
+	}
+	l.Handle(Key{Rune: 'j'})
+	if l.Note != "" {
+		t.Error("the note outlived the next key")
+	}
+
+	l.Handle(Key{Rune: 'r'})
+	typeKeys(l, "billing fix")
+	if foot := Popup(l, 90, 10)[9]; !strings.Contains(foot, "billing fix▏") {
+		t.Errorf("footer does not show the new name: %q", foot)
+	}
+	if o := l.Handle(Key{Name: "enter"}); o != Rename || l.Reply != "billing fix" || l.Renaming {
+		t.Errorf("got %v %q", o, l.Reply)
+	}
+	// An empty name is still a rename: it removes the label.
+	l.Handle(Key{Rune: 'r'})
+	if o := l.Handle(Key{Name: "enter"}); o != Rename || l.Reply != "" {
+		t.Errorf("empty rename = %v %q", o, l.Reply)
+	}
+	// Renaming starts from the current label, and the label wins over the title.
+	p.Label = "billing fix"
+	l.All = Agents([]tmux.Pane{p}, now)
+	if l.All[0].Name != "billing fix" {
+		t.Errorf("name = %q, want the label", l.All[0].Name)
+	}
+	l.Handle(Key{Rune: 'r'})
+	if l.Draft != "billing fix" {
+		t.Errorf("draft = %q, want the current label", l.Draft)
+	}
+	l.Handle(Key{Name: "esc"})
+
+	l.SetPreview("%1", "Which database?\n❯ 1. Postgres\n  2. Redis\n")
+	l.Timeline = []string{"e1", "e2", "e3", "e4", "14:05:12  running -> waiting  Permission  question"}
+	view := strings.Join(Popup(l, 100, 34), "\n")
+	for _, want := range []string{"── billing fix · question · session 2h ──", "running -> waiting", "❯ 1. Postgres", "e2"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("popup lacks %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "e1") {
+		t.Errorf("more than the last four state changes are shown:\n%s", view)
+	}
+	if lines := Popup(l, 100, 34); len(lines) != 34 {
+		t.Errorf("rendered %d lines for a 34-line screen", len(lines))
+	}
+	// A short preview keeps the screen and drops the timeline.
+	if view := strings.Join(Popup(l, 100, 15), "\n"); strings.Contains(view, "running -> waiting") || !strings.Contains(view, "❯ 1. Postgres") {
+		t.Errorf("short popup:\n%s", view)
+	}
+}
