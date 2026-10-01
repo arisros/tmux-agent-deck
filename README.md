@@ -212,7 +212,7 @@ Integration tests start their own `tmux -L deck-test-*` servers and never touch 
 - [ ] clear agents whose Claude has exited, and a stricter `deck doctor`
 - [ ] a command to run when an agent needs you
 
-Then Homebrew, other agents (Codex, opencode), and a preview you can answer from. The full order, the rules every change keeps, and what was declined: [docs/roadmap.md](docs/roadmap.md).
+Then a tested tmux floor, Codex, and a preview you can answer from. The full order, the rules every change keeps, and what was declined: [docs/roadmap.md](docs/roadmap.md).
 
 ## Prior art
 
