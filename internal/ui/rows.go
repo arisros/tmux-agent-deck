@@ -20,9 +20,12 @@ import (
 // Row is one agent.
 type Row struct {
 	tmux.Pane
-	Name  string
-	Age   time.Duration
-	Usage *usage.Session // nil until Claude has run the deck's statusLine for it
+	Name string
+	Age  time.Duration
+	// Branch is the git branch checked out where the agent works, when a
+	// view has looked it up.
+	Branch string
+	Usage  *usage.Session // nil until the agent has reported usage, which only Claude Code does
 }
 
 // Attach joins each row to the usage its Claude session reported: by session
@@ -48,18 +51,130 @@ func Attach(rows []Row, sessions map[string]usage.Session) []Row {
 	return rows
 }
 
+// Why splits the reason a waiting agent carries into its cause and the tool
+// it concerns: "permission Bash" is permission for Bash.
+func (r Row) Why() (cause, tool string) {
+	cause, tool, _ = strings.Cut(r.Reason, " ")
+	return cause, tool
+}
+
+// Branches fills each row's branch through lookup, asking once per path.
+func Branches(rows []Row, lookup func(dir string) string) []Row {
+	seen := map[string]string{}
+	for i := range rows {
+		b, ok := seen[rows[i].Path]
+		if !ok {
+			b = lookup(rows[i].Path)
+			seen[rows[i].Path] = b
+		}
+		rows[i].Branch = b
+	}
+	return rows
+}
+
+// Where is the folder a row works in, with its branch when known.
+func (r Row) Where() string {
+	if r.Branch == "" {
+		return filepath.Base(r.Path)
+	}
+	return filepath.Base(r.Path) + "@" + r.Branch
+}
+
+// Matches reports whether a row satisfies every term of a filter. A term is
+// a word found anywhere in the row, or field:word for one field: state,
+// reason, agent, session, window, branch, path, name or pane.
+func (r Row) Matches(terms []string) bool {
+	hay := strings.ToLower(strings.Join([]string{r.Name, r.Target(), r.Path, r.State, r.Reason, r.Agent, r.Branch}, " "))
+	for _, t := range terms {
+		if key, val, ok := strings.Cut(t, ":"); ok {
+			if field, known := r.field(key); known {
+				if !strings.Contains(strings.ToLower(field), val) {
+					return false
+				}
+				continue
+			}
+		}
+		if !strings.Contains(hay, t) {
+			return false
+		}
+	}
+	return true
+}
+
+func (r Row) field(key string) (string, bool) {
+	switch key {
+	case "state":
+		return r.State, true
+	case "reason":
+		return r.Reason, true
+	case "agent":
+		if r.Agent == "" {
+			return "claude", true
+		}
+		return r.Agent, true
+	case "session":
+		return r.Session, true
+	case "window":
+		return r.WindowName, true
+	case "branch":
+		return r.Branch, true
+	case "path":
+		return r.Path, true
+	case "name":
+		return r.Name, true
+	case "pane":
+		return r.ID, true
+	}
+	return "", false
+}
+
+// Filter narrows rows to those matching filter, and, with attention, to the
+// ones that need the user: waiting or done.
+func Filter(rows []Row, filter string, attention bool) []Row {
+	terms := strings.Fields(strings.ToLower(filter))
+	if len(terms) == 0 && !attention {
+		return rows
+	}
+	var out []Row
+	for _, r := range rows {
+		if attention && r.State != machine.Waiting && r.State != machine.Done {
+			continue
+		}
+		if r.Matches(terms) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// Tags are the short facts shown in front of a row's name: the agent when it
+// is not Claude Code, and the tool a permission is asked for.
+func (r Row) Tags() string {
+	var tags []string
+	if r.Agent != "" && r.Agent != "claude" {
+		tags = append(tags, r.Agent)
+	}
+	if _, tool := r.Why(); tool != "" {
+		tags = append(tags, tool)
+	}
+	if len(tags) == 0 {
+		return ""
+	}
+	return strings.Join(tags, " · ") + " · "
+}
+
 // Target is the tmux address shown for a row.
 func (r Row) Target() string { return r.Session + ":" + r.Window + "." + r.Index }
 
 var priority = map[string]int{machine.Waiting: 0, machine.Done: 1, machine.Running: 2, machine.Idle: 3}
 
-// Agents keeps the panes that run a live Claude session the deck knows about,
-// most urgent first. A pane whose Claude died keeps its options until the
-// next hook, so the process check is what hides it.
+// Agents keeps the panes that run a live agent the deck knows about, most
+// urgent first, and within waiting and done the longest wait first. A pane whose agent died keeps its options until a view sweeps
+// it, so the liveness check is what hides it.
 func Agents(panes []tmux.Pane, now time.Time) []Row {
 	var rows []Row
 	for _, p := range panes {
-		if p.State == "" || p.Sidebar != "" || !tmux.IsClaude(p.Command) {
+		if p.State == "" || p.Sidebar != "" || !p.Alive() {
 			continue
 		}
 		age := time.Duration(0)
@@ -72,6 +187,12 @@ func Agents(panes []tmux.Pane, now time.Time) []Row {
 		a, b := rows[i], rows[j]
 		if priority[a.State] != priority[b.State] {
 			return priority[a.State] < priority[b.State]
+		}
+		// Among the agents that need the user, the one kept waiting longest
+		// comes first. The others keep their place, so the list does not
+		// reshuffle while they work.
+		if (a.State == machine.Waiting || a.State == machine.Done) && a.Since != b.Since && a.Since > 0 && b.Since > 0 {
+			return a.Since < b.Since
 		}
 		if a.Session != b.Session {
 			return a.Session < b.Session
@@ -86,9 +207,12 @@ func Agents(panes []tmux.Pane, now time.Time) []Row {
 
 func num(s string) int { n, _ := strconv.Atoi(s); return n }
 
-// name is Claude's session title from the terminal title, without the status
-// glyph Claude prefixes; the folder when there is no title yet.
+// name is the label the user gave, else the agent's session title from the
+// terminal title without the status glyph Claude prefixes, else the folder.
 func name(p tmux.Pane) string {
+	if p.Label != "" {
+		return p.Label
+	}
 	t := strings.TrimLeftFunc(p.Title, func(r rune) bool {
 		return unicode.IsSpace(r) || (r > 0x2000 && !unicode.IsLetter(r) && !unicode.IsDigit(r))
 	})

@@ -53,6 +53,17 @@ func (c Client) Run(args ...string) (string, error) {
 	return out.String(), nil
 }
 
+// RunInput is Run with input on the command's stdin, for load-buffer.
+func (c Client) RunInput(input string, args ...string) (string, error) {
+	var out, errb bytes.Buffer
+	cmd := c.command(args...)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = strings.NewReader(input), &out, &errb
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("tmux %s: %w: %s", args[0], err, strings.TrimSpace(errb.String()))
+	}
+	return out.String(), nil
+}
+
 // Batch runs commands joined with ";", in as few invocations as the size
 // limit allows.
 func (c Client) Batch(cmds [][]string) error {
@@ -112,6 +123,13 @@ const (
 	// IsClaudeFormat matches a pane whose foreground process is Claude Code,
 	// which renames itself to its version number ("2.1.284").
 	IsClaudeFormat = `#{||:#{m/r:^[0-9]+\.[0-9]+\.[0-9]+$,#{pane_current_command}},#{m:claude*,#{pane_current_command}}}`
+
+	// AliveFormat is true while a pane still runs the agent the deck heard
+	// from: its foreground command is the one remembered in @deck_cmd when a
+	// hook last fired there. An agent started through a wrapper shows as the
+	// wrapper ("node"), so no list of process names can tell. Claude Code is
+	// also matched by name, since it renames itself after it starts.
+	AliveFormat = `#{||:#{&&:#{@deck_cmd},#{==:#{pane_current_command},#{@deck_cmd}}},` + IsClaudeFormat + `}`
 )
 
 // Pane is one row of list-panes.
@@ -119,9 +137,19 @@ type Pane struct {
 	ID, Session, SessionID, Window, WindowID, Index string
 	WindowName, Command, Title, Path                string
 	State, SID, Sidebar                             string
-	Since                                           int64
-	PaneActive, WindowActive, Attached              bool
-	WindowPanes                                     int
+	// Reason is why a waiting agent waits, "permission Bash" or "question".
+	Reason string
+	// Cmd is the pane's foreground command when a hook last fired there.
+	Cmd string
+	// Agent names the agent in the pane: "claude", "codex".
+	Agent string
+	// Label is the name the user gave the agent with "r" or deck rename.
+	Label string
+	// Started is when the deck first heard from the session, unix seconds.
+	Started                            int64
+	Since                              int64
+	PaneActive, WindowActive, Attached bool
+	WindowPanes                        int
 }
 
 var paneFields = []string{
@@ -129,6 +157,7 @@ var paneFields = []string{
 	"#{window_name}", "#{pane_current_command}", "#{pane_title}", "#{pane_current_path}",
 	"#{@deck_state}", "#{@deck_sid}", "#{@deck_sidebar}", "#{@deck_since}",
 	"#{pane_active}", "#{window_active}", "#{session_attached}", "#{window_panes}",
+	"#{@deck_reason}", "#{@deck_cmd}", "#{@deck_agent}", "#{@deck_started}", "#{@deck_name}",
 }
 
 // sep must survive tmux's output escaping: tmux prints control characters
@@ -153,6 +182,7 @@ func ParsePanes(out string) []Pane {
 			continue
 		}
 		since, _ := strconv.ParseInt(f[13], 10, 64)
+		started, _ := strconv.ParseInt(f[21], 10, 64)
 		attached, _ := strconv.Atoi(f[16])
 		windowPanes, _ := strconv.Atoi(f[17])
 		panes = append(panes, Pane{
@@ -160,10 +190,15 @@ func ParsePanes(out string) []Pane {
 			WindowName: f[6], Command: f[7], Title: f[8], Path: f[9],
 			State: f[10], SID: f[11], Sidebar: f[12], Since: since,
 			PaneActive: f[14] == "1", WindowActive: f[15] == "1", Attached: attached > 0,
-			WindowPanes: windowPanes,
+			WindowPanes: windowPanes, Reason: f[18], Cmd: f[19], Agent: f[20], Started: started, Label: f[22],
 		})
 	}
 	return panes
+}
+
+// Alive matches the same panes as AliveFormat.
+func (p Pane) Alive() bool {
+	return (p.Cmd != "" && p.Command == p.Cmd) || IsClaude(p.Command)
 }
 
 // IsClaude matches the same processes as IsClaudeFormat.

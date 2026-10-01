@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/arisros/tmux-agent-deck/internal/agent"
 	"github.com/arisros/tmux-agent-deck/internal/install"
 	"github.com/arisros/tmux-agent-deck/internal/store"
 )
@@ -21,52 +22,84 @@ func runInstall(args []string, add bool) error {
 		name = "install"
 	}
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
-	claude := fs.Bool("claude", false, "target Claude Code")
+	chosen := map[string]*bool{}
+	for _, t := range targets {
+		chosen[t.name] = fs.Bool(t.name, false, "target "+t.title)
+	}
 	rec := fs.Bool("record", false, "install the recorder hooks")
 	apply := fs.Bool("apply", false, "write the change (default: preview only)")
-	path := fs.String("settings", defaultSettingsPath(), "Claude settings file")
+	wrap := fs.Bool("wrap-statusline", false, "keep your own statusLine and record usage through it (Claude Code)")
+	path := fs.String("settings", "", "the agent's settings or hooks file (default: its usual place)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if !*claude {
-		return errors.New("--claude is required")
+	var t *target
+	for i := range targets {
+		if *chosen[targets[i].name] {
+			if t != nil {
+				return errors.New("name one agent at a time")
+			}
+			t = &targets[i]
+		}
 	}
+	if t == nil {
+		return errors.New("name the agent: --claude, --codex, --gemini or --opencode")
+	}
+	if *path == "" {
+		*path = t.path()
+	}
+	claude := t.name == "claude"
 
 	before, err := os.ReadFile(*path)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	var after []byte
+	if t.plugin != nil {
+		return installPlugin(t, *path, before, add, *apply)
+	}
 	if add {
 		bin, err := selfPath()
 		if err != nil {
 			return err
 		}
-		h, events := install.Hook{Command: guarded(bin, "hook"), Timeout: 5}, liveEvents
+		live, recorded, note := t.events()
+		if note != "" {
+			fmt.Println("Note:", note)
+		}
+		h, events := install.Hook{Command: guarded(bin, "hook"+t.hookArgs), Timeout: t.timeout}, live
 		if *rec {
-			fmt.Println("Note: the recorder replaces the live hooks; run install --claude again to return to them.")
+			fmt.Printf("Note: the recorder replaces the live hooks; run install --%s again to return to them.\n", t.name)
 			// Recording never feeds state, so it may run async and out of order.
-			h, events = install.Hook{Command: guarded(bin, "hook --record"), Async: true, Timeout: 5}, recordEvents
+			h, events = install.Hook{Command: guarded(bin, "hook --record"), Async: t.async, Timeout: t.timeout}, recorded
 		}
 		after, err = install.Add(before, events, h)
 		if err != nil {
 			return err
 		}
-		if !*rec {
+		if claude && !*rec {
 			var owned bool
 			if after, owned, err = install.SetStatusLine(after, guarded(bin, "statusline")); err != nil {
 				return err
 			}
-			if !owned {
+			if !owned && *wrap {
+				if after, owned, err = install.WrapStatusLine(after, func(b64 string) string { return wrapping(bin, b64) }); err != nil {
+					return err
+				}
+			}
+			if !owned && !strings.Contains(string(after), install.WrapFlag) {
 				fmt.Println("Note: you have your own statusLine, so the deck will not show token usage or plan limits.")
+				fmt.Println("      Add --wrap-statusline to keep yours and record them through it.")
 			}
 		}
 	} else {
 		if after, err = install.Remove(before); err != nil {
 			return err
 		}
-		if after, err = install.RemoveStatusLine(after); err != nil {
-			return err
+		if claude {
+			if after, err = install.RemoveStatusLine(after); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -88,8 +121,146 @@ func runInstall(args []string, add bool) error {
 	if backup != "" {
 		fmt.Println("Backup:", backup)
 	}
-	fmt.Println("Running Claude sessions pick this up on their next settings reload; restart one if it does not.")
+	if add {
+		fmt.Println(t.afterApply)
+	}
 	return nil
+}
+
+// target is an agent whose hooks the deck can install.
+type target struct {
+	name, title string
+	path        func() string
+	// events returns the live and the recorder events, and a note to print.
+	events     func() (live, recorded []string, note string)
+	hookArgs   string
+	async      bool // whether the agent's hooks take "async"
+	timeout    int  // in the agent's own unit
+	afterApply string
+	// plugin, when set, makes the target a single file the deck owns whole
+	// instead of hook entries merged into the agent's settings.
+	plugin func(bin string) []byte
+}
+
+// installPlugin writes or removes a plugin file. The deck owns the whole
+// file, and never touches one it did not write.
+func installPlugin(t *target, path string, before []byte, add, apply bool) error {
+	if before != nil && !strings.Contains(string(before), install.Marker) {
+		return fmt.Errorf("%s is not the deck's plugin; move it away first", path)
+	}
+	var after []byte
+	if add {
+		bin, err := selfPath()
+		if err != nil {
+			return err
+		}
+		after = t.plugin(bin)
+	}
+	if string(before) == string(after) {
+		fmt.Println("No change needed:", path)
+		return nil
+	}
+	if !apply {
+		verb := "write"
+		if !add {
+			verb = "remove"
+		}
+		fmt.Printf("Would %s %s\n\nPreview only. Repeat with --apply to save.\n", verb, path)
+		return nil
+	}
+	if !add {
+		if err := os.Remove(path); err != nil {
+			return err
+		}
+		fmt.Println("Removed", path)
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	if _, err := writeWithBackup(path, before, after); err != nil {
+		return err
+	}
+	fmt.Println("Wrote", path)
+	fmt.Println(t.afterApply)
+	return nil
+}
+
+func geminiSettingsPath() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".gemini", "settings.json")
+}
+
+func opencodePluginPath() string {
+	base := os.Getenv("XDG_CONFIG_HOME")
+	if base == "" {
+		home, _ := os.UserHomeDir()
+		base = filepath.Join(home, ".config")
+	}
+	return filepath.Join(base, "opencode", "plugins", "tmux-agent-deck.js")
+}
+
+var geminiEvents = []string{
+	"SessionStart", "SessionEnd", "BeforeAgent", "AfterAgent", "BeforeModel", "BeforeTool", "AfterTool", "Notification",
+}
+
+var targets = []target{
+	{
+		name: "claude", title: "Claude Code", path: defaultSettingsPath, async: true, timeout: 5,
+		events:     func() ([]string, []string, string) { return liveEvents, recordEvents, "" },
+		afterApply: "Running Claude sessions pick this up on their next settings reload; restart one if it does not.",
+	},
+	{
+		name: "codex", title: "Codex CLI", path: codexHooksPath, async: true, timeout: 5, hookArgs: " --agent codex",
+		events:     codexEvents,
+		afterApply: "Codex runs a new hook only after you trust it: open Codex and run /hooks. A changed command needs trusting again.",
+	},
+	{
+		// Gemini's timeout is in milliseconds.
+		name: "gemini", title: "Gemini CLI", path: geminiSettingsPath, timeout: 5000, hookArgs: " --agent gemini",
+		events: func() ([]string, []string, string) { return geminiEvents, geminiEvents, "" },
+		afterApply: "Restart Gemini CLI to load the hooks. If no agent shows up, its environment redaction is hiding TMUX_PANE from hooks: " +
+			"allow that variable in Gemini's settings.",
+	},
+	{
+		name: "opencode", title: "opencode", path: opencodePluginPath,
+		plugin: func(bin string) []byte {
+			return []byte(strings.ReplaceAll(agent.OpenCodePlugin, "__DECK__", strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(bin)))
+		},
+		afterApply: "Restart opencode to load the plugin. It reports sessions of an opencode started in a tmux pane, not ones reached with opencode attach.",
+	},
+}
+
+func codexHooksPath() string {
+	if dir := os.Getenv("CODEX_HOME"); dir != "" {
+		return filepath.Join(dir, "hooks.json")
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".codex", "hooks.json")
+}
+
+// codexEvents leaves out the events the installed Codex does not know: an
+// unknown event name could invalidate the hooks file. SessionEnd arrived in
+// 0.145 and Interrupt in 0.150.
+func codexEvents() (live, recorded []string, note string) {
+	live = []string{"SessionStart", "UserPromptSubmit", "PreToolUse", "PermissionRequest", "PostToolUse", "Stop"}
+	v := os.Getenv("DECK_CODEX_VERSION")
+	if v == "" {
+		out, _ := exec.Command("codex", "--version").Output()
+		v = string(out)
+	}
+	switch {
+	case tmuxAtLeast(v, 0, 150):
+		live = append(live, "SessionEnd", "Interrupt")
+	case tmuxAtLeast(v, 0, 145):
+		live = append(live, "SessionEnd")
+		note = "this Codex has no Interrupt hook (0.150 adds it): an interrupted turn shows as running until the next prompt"
+	case tmuxAtLeast(v, 0, 124):
+		note = "this Codex has no SessionEnd or Interrupt hook (0.145 and 0.150 add them): a closed session is forgotten when its pane changes, and an interrupted turn shows as running until the next prompt"
+	default:
+		note = "no Codex 0.124 or newer found on PATH; installing the events every such version knows. Run this again after upgrading Codex"
+	}
+	return live, live, note
 }
 
 // recordEvents are the hooks the recorder listens to. Every name here must be
@@ -115,6 +286,15 @@ var liveEvents = []string{
 func guarded(bin, args string) string {
 	q := shellQuote(bin)
 	return "test -x " + q + " && " + q + " " + args + "; exit 0 # " + install.Marker
+}
+
+// wrapping is the statusLine command that runs the user's own line through
+// the deck. Without the binary it runs their line directly, so removing the
+// plugin never blanks a status line.
+func wrapping(bin, original64 string) string {
+	q := shellQuote(bin)
+	return "if test -x " + q + "; then " + q + " statusline " + install.WrapFlag + " " + original64 +
+		`; else sh -c "$(echo ` + original64 + ` | base64 -d)"; fi # ` + install.Marker
 }
 
 func defaultSettingsPath() string {

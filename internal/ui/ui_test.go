@@ -333,3 +333,289 @@ func TestDecodeMixedRead(t *testing.T) {
 		}
 	}
 }
+
+func TestWaitingRowSaysWhy(t *testing.T) {
+	ask := pane("%1", "a", "1", "waiting", "2.1.284", "✳ deploy", 0)
+	ask.Reason = "permission Bash"
+	question := pane("%2", "a", "2", "waiting", "2.1.284", "✳ schema", 0)
+	question.Reason = "question"
+	unknown := pane("%3", "a", "3", "waiting", "2.1.284", "✳ discovered", 0)
+	l := &List{All: Agents([]tmux.Pane{ask, question, unknown}, now)}
+
+	popup := Popup(l, 110, 10)
+	for i, want := range []string{"permission", "question", "waiting"} {
+		if line := popup[2+i]; !strings.Contains(line, want) {
+			t.Errorf("popup row %d lacks %q: %q", i, want, line)
+		}
+	}
+	if !strings.Contains(popup[2], "Bash · ") || strings.Contains(popup[3], " · ") {
+		t.Errorf("the tool belongs on the permission row only:\n%q\n%q", popup[2], popup[3])
+	}
+	for _, line := range popup {
+		if Width(line) > 110 {
+			t.Errorf("popup line is %d cells wide: %q", Width(line), line)
+		}
+	}
+
+	side := strings.Join(Sidebar(l, nil, "a", false, 34, 14), "\n")
+	if !strings.Contains(side, "1.0 · permission Bash · ") || !strings.Contains(side, "2.0 · question · ") {
+		t.Errorf("sidebar does not say why:\n%s", side)
+	}
+
+	l.Filter = "question"
+	if v := l.Visible(); len(v) != 1 || v[0].ID != "%2" {
+		t.Errorf("filtering by reason kept %v", v)
+	}
+}
+
+func typeKeys(l *List, s string) Outcome {
+	var o Outcome
+	for _, r := range s {
+		o = l.Handle(Key{Rune: r})
+	}
+	return o
+}
+
+func TestPopupShowsTheSelectedAgentsScreen(t *testing.T) {
+	ask := pane("%1", "a", "1", "waiting", "2.1.284", "✳ deploy", 0)
+	ask.Reason = "permission Bash"
+	l := &List{All: Agents([]tmux.Pane{ask, pane("%2", "a", "2", "running", "2.1.284", "✳ other", 0)}, now)}
+	l.SetPreview("%1", "Bash command\n  rm -rf build\nDo you want to proceed?\n❯ 1. Yes\n  2. No\n\n\n")
+
+	lines := Popup(l, 100, 30)
+	if len(lines) != 30 {
+		t.Fatalf("rendered %d lines for a 30-line screen", len(lines))
+	}
+	view := strings.Join(lines, "\n")
+	for _, want := range []string{"── deploy · permission Bash ──", "rm -rf build", "❯ 1. Yes"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("popup lacks %q:\n%s", want, view)
+		}
+	}
+	for _, line := range lines {
+		if Width(line) > 100 {
+			t.Errorf("line is %d cells wide: %q", Width(line), line)
+		}
+	}
+	// Moving the cursor away hides a screen that is no longer the selected one.
+	l.Handle(Key{Rune: 'j'})
+	if view := strings.Join(Popup(l, 100, 30), "\n"); strings.Contains(view, "rm -rf build") {
+		t.Errorf("the previous agent's screen is still shown:\n%s", view)
+	}
+	// A short popup keeps the list and drops the screen.
+	if view := strings.Join(Popup(l, 100, 10), "\n"); strings.Contains(view, "──  ") || len(Popup(l, 100, 10)) != 10 {
+		t.Errorf("short popup:\n%s", view)
+	}
+}
+
+func TestAnswerOnlyAWaitingAgentWhoseScreenIsShown(t *testing.T) {
+	ask := pane("%1", "a", "1", "waiting", "2.1.284", "✳ deploy", 0)
+	busy := pane("%2", "a", "2", "running", "2.1.284", "✳ other", 0)
+	l := &List{All: Agents([]tmux.Pane{ask, busy}, now)}
+	if o := l.Handle(Key{Rune: '1'}); o != Stay {
+		t.Errorf("answered a dialog nobody can read: %v", o)
+	}
+	l.SetPreview("%1", "Do you want to proceed?")
+	if o := l.Handle(Key{Rune: '2'}); o != Answer || l.Reply != "2" {
+		t.Errorf("got %v %q, want Answer 2", o, l.Reply)
+	}
+	l.Handle(Key{Rune: 'j'})
+	l.SetPreview("%2", "working")
+	if o := l.Handle(Key{Rune: '1'}); o != Stay {
+		t.Errorf("answered an agent that is not waiting: %v", o)
+	}
+}
+
+func TestComposeSendsOnEnterAndEscDrops(t *testing.T) {
+	l := &List{All: Agents([]tmux.Pane{pane("%1", "a", "1", "idle", "2.1.284", "✳ api", 0)}, now)}
+	l.Handle(Key{Rune: 'p'})
+	// Keys that are commands elsewhere are text here.
+	typeKeys(l, "quit x 1/")
+	if foot := Popup(l, 80, 10)[9]; !strings.Contains(foot, "to api > ") || !strings.Contains(foot, "quit x 1/▏") {
+		t.Errorf("footer does not show the draft: %q", Popup(l, 80, 10)[9])
+	}
+	l.Handle(Key{Name: "backspace"})
+	if o := l.Handle(Key{Name: "enter"}); o != Send || l.Reply != "quit x 1" || l.Composing || l.Draft != "" {
+		t.Errorf("got %v reply %q composing %v", o, l.Reply, l.Composing)
+	}
+	l.Handle(Key{Rune: 'p'})
+	typeKeys(l, "never mind")
+	if o := l.Handle(Key{Name: "esc"}); o != Stay || l.Composing || l.Draft != "" {
+		t.Errorf("esc did not drop the draft: %v %q", o, l.Draft)
+	}
+	l.Handle(Key{Rune: 'p'})
+	if o := l.Handle(Key{Name: "enter"}); o != Stay {
+		t.Errorf("an empty draft was sent: %v", o)
+	}
+}
+
+func TestInterruptNeedsConfirmationAndSeenNeedsDone(t *testing.T) {
+	l := &List{All: Agents([]tmux.Pane{
+		pane("%1", "a", "1", "done", "2.1.284", "✳ finished", 0),
+		pane("%2", "a", "2", "running", "2.1.284", "✳ busy", 0),
+		pane("%3", "a", "3", "idle", "2.1.284", "✳ quiet", 0),
+	}, now)}
+	if o := l.Handle(Key{Rune: 'i'}); o != Stay || l.Confirming {
+		t.Error("a finished agent has nothing to interrupt")
+	}
+	if o := l.Handle(Key{Rune: 's'}); o != Seen {
+		t.Errorf("s on a done agent = %v, want Seen", o)
+	}
+	l.Handle(Key{Rune: 'j'})
+	if o := l.Handle(Key{Rune: 's'}); o != Stay {
+		t.Errorf("s on a running agent = %v", o)
+	}
+	l.Handle(Key{Rune: 'i'})
+	if !strings.Contains(Popup(l, 80, 10)[9], "interrupt busy? y/n") {
+		t.Errorf("footer does not ask: %q", Popup(l, 80, 10)[9])
+	}
+	if o := l.Handle(Key{Rune: 'n'}); o != Stay {
+		t.Errorf("n interrupted: %v", o)
+	}
+	l.Handle(Key{Rune: 'i'})
+	if o := l.Handle(Key{Rune: 'y'}); o != Interrupt {
+		t.Errorf("y = %v, want Interrupt", o)
+	}
+}
+
+func TestLongestWaitComesFirst(t *testing.T) {
+	rows := Agents([]tmux.Pane{
+		pane("%1", "a", "1", "waiting", "2.1.284", "✳ asked just now", 9_990),
+		pane("%2", "z", "9", "waiting", "2.1.284", "✳ asked long ago", 9_000),
+		pane("%3", "a", "2", "done", "2.1.284", "✳ finished recently", 9_950),
+		pane("%4", "b", "1", "done", "2.1.284", "✳ finished first", 9_100),
+		// Working agents keep their place: session, then window.
+		pane("%5", "b", "1", "running", "2.1.284", "✳ started first", 9_000),
+		pane("%6", "a", "3", "running", "2.1.284", "✳ started later", 9_900),
+	}, now)
+	var ids []string
+	for _, r := range rows {
+		ids = append(ids, r.ID)
+	}
+	if got := strings.Join(ids, ","); got != "%2,%1,%4,%3,%6,%5" {
+		t.Errorf("order = %s", got)
+	}
+}
+
+func TestFilterByFieldAndAttention(t *testing.T) {
+	ask := pane("%1", "work", "1", "waiting", "2.1.284", "✳ deploy api", 0)
+	ask.Reason = "permission Bash"
+	codex := pane("%2", "work", "2", "running", "node", "✳ running tests", 0)
+	codex.Agent, codex.Cmd = "codex", "node"
+	done := pane("%3", "play", "1", "done", "2.1.284", "✳ state machine notes", 0)
+	rows := Branches(Agents([]tmux.Pane{ask, codex, done}, now), func(dir string) string {
+		return map[string]string{"/work/%1": "main", "/work/%2": "feat/oauth"}[dir]
+	})
+	cases := map[string]string{
+		"":                              "%1,%3,%2",
+		"state:waiting":                 "%1",
+		"state:done":                    "%3",
+		"state":                         "%3", // a bare word is searched everywhere, here in a name
+		"reason:permission":             "%1",
+		"reason:bash":                   "%1",
+		"agent:codex":                   "%2",
+		"agent:claude":                  "%1,%3",
+		"session:work":                  "%1,%2",
+		"branch:feat":                   "%2",
+		"branch:main state:waiting":     "%1",
+		"session:work running":          "%2",
+		"SESSION:WORK State:Running":    "%2",
+		"work:1.0":                      "%1", // a tmux target, not a field
+		"session:work state:done":       "",
+		"path:/work/%3 pane:%3 name:st": "%3",
+	}
+	for filter, want := range cases {
+		var ids []string
+		for _, r := range Filter(rows, filter, false) {
+			ids = append(ids, r.ID)
+		}
+		if got := strings.Join(ids, ","); got != want {
+			t.Errorf("filter %q kept %q, want %q", filter, got, want)
+		}
+	}
+
+	l := &List{All: rows, Cursor: 2}
+	l.Handle(Key{Rune: 'a'})
+	if v := l.Visible(); len(v) != 2 || v[0].ID != "%1" || v[1].ID != "%3" || l.Cursor != 0 {
+		t.Errorf("attention kept %v, cursor %d", v, l.Cursor)
+	}
+	if foot := Popup(l, 160, 12)[11]; !strings.Contains(foot, "needing you only") {
+		t.Errorf("footer does not say the list is narrowed: %q", foot)
+	}
+	l.Handle(Key{Rune: 'a'})
+	if len(l.Visible()) != 3 {
+		t.Error("a second press did not bring every agent back")
+	}
+
+	popup := strings.Join(Popup(l, 160, 12), "\n")
+	for _, want := range []string{"%1@main", "%2@feat/oauth"} {
+		if !strings.Contains(popup, want) {
+			t.Errorf("popup lacks %q:\n%s", want, popup)
+		}
+	}
+	if side := strings.Join(Sidebar(l, nil, "work", false, 40, 16), "\n"); !strings.Contains(side, " · feat/oauth") {
+		t.Errorf("sidebar lacks the branch:\n%s", side)
+	}
+}
+
+func TestRenameCopyAndTimeline(t *testing.T) {
+	p := pane("%1", "a", "1", "waiting", "2.1.284", "✳ a long generated title", 0)
+	p.Reason, p.Started = "question", now.Unix()-2*3600
+	l := &List{All: Agents([]tmux.Pane{p}, now), Now: now}
+
+	if o := l.Handle(Key{Rune: 'y'}); o != Copy {
+		t.Errorf("y = %v, want Copy", o)
+	}
+	l.Note = "copied 12 lines"
+	if foot := Popup(l, 90, 10)[9]; !strings.Contains(foot, "copied 12 lines") {
+		t.Errorf("footer does not show the note: %q", foot)
+	}
+	l.Handle(Key{Rune: 'j'})
+	if l.Note != "" {
+		t.Error("the note outlived the next key")
+	}
+
+	l.Handle(Key{Rune: 'r'})
+	typeKeys(l, "billing fix")
+	if foot := Popup(l, 90, 10)[9]; !strings.Contains(foot, "billing fix▏") {
+		t.Errorf("footer does not show the new name: %q", foot)
+	}
+	if o := l.Handle(Key{Name: "enter"}); o != Rename || l.Reply != "billing fix" || l.Renaming {
+		t.Errorf("got %v %q", o, l.Reply)
+	}
+	// An empty name is still a rename: it removes the label.
+	l.Handle(Key{Rune: 'r'})
+	if o := l.Handle(Key{Name: "enter"}); o != Rename || l.Reply != "" {
+		t.Errorf("empty rename = %v %q", o, l.Reply)
+	}
+	// Renaming starts from the current label, and the label wins over the title.
+	p.Label = "billing fix"
+	l.All = Agents([]tmux.Pane{p}, now)
+	if l.All[0].Name != "billing fix" {
+		t.Errorf("name = %q, want the label", l.All[0].Name)
+	}
+	l.Handle(Key{Rune: 'r'})
+	if l.Draft != "billing fix" {
+		t.Errorf("draft = %q, want the current label", l.Draft)
+	}
+	l.Handle(Key{Name: "esc"})
+
+	l.SetPreview("%1", "Which database?\n❯ 1. Postgres\n  2. Redis\n")
+	l.Timeline = []string{"e1", "e2", "e3", "e4", "14:05:12  running -> waiting  Permission  question"}
+	view := strings.Join(Popup(l, 100, 34), "\n")
+	for _, want := range []string{"── billing fix · question · session 2h ──", "running -> waiting", "❯ 1. Postgres", "e2"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("popup lacks %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "e1") {
+		t.Errorf("more than the last four state changes are shown:\n%s", view)
+	}
+	if lines := Popup(l, 100, 34); len(lines) != 34 {
+		t.Errorf("rendered %d lines for a 34-line screen", len(lines))
+	}
+	// A short preview keeps the screen and drops the timeline.
+	if view := strings.Join(Popup(l, 100, 15), "\n"); strings.Contains(view, "running -> waiting") || !strings.Contains(view, "❯ 1. Postgres") {
+		t.Errorf("short popup:\n%s", view)
+	}
+}

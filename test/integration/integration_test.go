@@ -1,6 +1,10 @@
 package integration
 
 import (
+	"bufio"
+	"bytes"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -35,7 +39,10 @@ func TestLifecycleAndFormats(t *testing.T) {
 		}
 	}
 	if icon := h.opt(a, "E:@deck_window_icon"); !strings.Contains(icon, "✔") {
-		t.Errorf("window icon %q lacks ✔", icon)
+		// Everything the icon is computed from, and what moved the state.
+		t.Errorf("window icon %q lacks ✔\npanes: %s\nicon again: %q\nevents:\n%s", icon,
+			h.opt(a, "P:[#{pane_id} cmd=#{pane_current_command} remembered=#{@deck_cmd} alive=#{E:@deck_alive} state=#{@deck_state}] "),
+			h.opt(a, "E:@deck_window_icon"), h.deck("", "events"))
 	}
 
 	// Selecting the pane runs the tmux hook, which runs `deck focus`.
@@ -46,6 +53,65 @@ func TestLifecycleAndFormats(t *testing.T) {
 	if got := h.opt(a, "@deck_state"); got != "" {
 		t.Errorf("state after SessionEnd = %q", got)
 	}
+}
+
+func TestReasonAndEventLog(t *testing.T) {
+	h := newHarness(t)
+	a := h.agent("alpha")
+	h.hook(a, "SessionStart", `,"source":"startup"`)
+	h.hook(a, "UserPromptSubmit", "")
+	h.hook(a, "PermissionRequest", `,"tool_name":"Bash","tool_input":{"command":"kubectl delete ns prod"}`)
+	if got := h.opt(a, "@deck_reason"); got != "permission Bash" {
+		t.Fatalf("reason = %q, want permission Bash", got)
+	}
+	if out := h.deck("", "list"); !strings.Contains(out, "waiting (permission Bash)") {
+		t.Errorf("list does not say why:\n%s", out)
+	}
+	h.hook(a, "PostToolUse", "")
+	if got := h.opt(a, "@deck_reason"); got != "" {
+		t.Errorf("reason = %q after the approval, want none", got)
+	}
+	h.hook(a, "PermissionRequest", `,"tool_name":"AskUserQuestion"`)
+	if got := h.opt(a, "@deck_reason"); got != "question" {
+		t.Errorf("reason = %q, want question", got)
+	}
+	h.hook(a, "SessionEnd", "")
+
+	out := h.deck("", "events", "--pane", a)
+	for _, want := range []string{
+		"idle -> idle", "idle -> running", "running -> waiting", "permission Bash",
+		"waiting -> running", "question", "End",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("events lack %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "kubectl") {
+		t.Errorf("a tool argument reached the event log:\n%s", out)
+	}
+	if lines := strings.Count(strings.TrimSpace(h.deck("", "events", "--pane", a, "--json")), "\n") + 1; lines != 6 {
+		t.Errorf("%d JSON events, want 6", lines)
+	}
+}
+
+func TestNotifyCommand(t *testing.T) {
+	h := newHarness(t)
+	out := filepath.Join(t.TempDir(), "notified")
+	script := filepath.Join(t.TempDir(), "notify.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho \"$@\" >> "+out+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	h.tmux("set-option", "-g", "@deck-notify-command", script)
+	a := h.agent("alpha")
+	h.hook(a, "UserPromptSubmit", "")
+	h.hook(a, "PermissionRequest", `,"tool_name":"Bash"`)
+	h.hook(a, "PostToolUse", "")
+	h.hook(a, "Stop", "")
+	// Both run detached, so their order in the file is not fixed.
+	h.eventually(func() bool {
+		b, _ := os.ReadFile(out)
+		return strings.Contains(string(b), "waiting "+a+" permission Bash\n") && strings.Contains(string(b), "done "+a+"\n")
+	}, "the notify command to run for waiting and for done")
 }
 
 func TestWindowIconPrefersMostUrgent(t *testing.T) {
@@ -70,6 +136,56 @@ func TestDeadAgentHidden(t *testing.T) {
 	}
 	if out := h.deck("", "list"); strings.Contains(out, "running") {
 		t.Errorf("dead agent listed:\n%s", out)
+	}
+	// Listing swept it: nothing of the agent is left on the pane.
+	for _, o := range []string{"@deck_state", "@deck_sid", "@deck_cmd"} {
+		if got := h.opt(a, o); got != "" {
+			t.Errorf("%s = %q after the agent exited", o, got)
+		}
+	}
+	if out := h.deck("", "events", "--pane", a); !strings.Contains(out, "Exit") {
+		t.Errorf("the exit is not in the event log:\n%s", out)
+	}
+}
+
+// An agent started through a wrapper has a process name the deck cannot
+// know. It is tracked by the command its pane ran when its hooks fired.
+// A pane the deck never heard from has no remembered command; that must not
+// read as "unchanged" just because both sides are empty.
+func TestPaneWithoutARememberedCommandIsNotAlive(t *testing.T) {
+	h := newHarness(t)
+	a := h.tmux("split-window", "-d", "-t", "alpha", "-P", "-F", "#{pane_id}", "sleep 100000")
+	h.eventually(func() bool { return h.opt(a, "pane_current_command") == "sleep" }, "plain pane running")
+	if got := h.opt(a, "E:@deck_alive"); got != "0" {
+		t.Errorf("alive = %q for a pane with no agent", got)
+	}
+	h.tmux("set-option", "-p", "-t", a, "@deck_cmd", "sleep")
+	if got := h.opt(a, "E:@deck_alive"); got != "1" {
+		t.Errorf("alive = %q once the command is remembered", got)
+	}
+}
+
+func TestAgentBehindAWrapperIsTracked(t *testing.T) {
+	h := newHarness(t)
+	a := h.tmux("split-window", "-d", "-t", "alpha", "-P", "-F", "#{pane_id}", "sleep 100000")
+	h.eventually(func() bool { return h.opt(a, "pane_current_command") == "sleep" }, "wrapper running")
+	h.hook(a, "UserPromptSubmit", "")
+	if got := h.opt(a, "@deck_cmd"); got != "sleep" {
+		t.Fatalf("@deck_cmd = %q, want the pane's command", got)
+	}
+	if icon := h.opt(a, "E:@deck_pane_icon"); !strings.Contains(icon, "●") {
+		t.Errorf("pane icon %q lacks the running dot", icon)
+	}
+	if out := h.deck("", "list"); !strings.Contains(out, "running") {
+		t.Errorf("wrapped agent not listed:\n%s", out)
+	}
+	h.tmux("respawn-pane", "-k", "-t", a, "cat")
+	h.eventually(func() bool { return h.opt(a, "pane_current_command") == "cat" }, "wrapper replaced")
+	if icon := h.opt(a, "E:@deck_pane_icon"); icon != "" {
+		t.Errorf("exited agent still shows %q", icon)
+	}
+	if out := h.deck("", "list"); strings.Contains(out, "running") {
+		t.Errorf("exited agent listed:\n%s", out)
 	}
 }
 
@@ -307,6 +423,19 @@ func TestStatusLineFeedsTheViews(t *testing.T) {
 			t.Errorf("popup lacks %q:\n%s", want, screen)
 		}
 	}
+	// Wrapping a status line of the user's own: theirs is printed, from the
+	// same input, and the numbers are still recorded.
+	mine := base64.StdEncoding.EncodeToString([]byte(`printf 'mine: '; grep -o '"used_percentage":77'`))
+	wrappedLine := h.deck(`{"session_id":"`+sid+`","context_window":{"used_percentage":77}}`, "statusline", "--wrap64", mine)
+	if strings.TrimSpace(wrappedLine) != `mine: "used_percentage":77` {
+		t.Errorf("wrapped status line = %q", wrappedLine)
+	}
+	if out := h.deck("", "list", "--json"); !strings.Contains(out, a) {
+		t.Errorf("agent missing after the wrapped line:\n%s", out)
+	}
+	if b, err := os.ReadFile(filepath.Join(filepath.Dir(h.state), "usage", sid+".json")); err != nil || !strings.Contains(string(b), `"context_used":77`) {
+		t.Errorf("wrapped line did not record usage: %v %s", err, b)
+	}
 	if out := h.deck("not json", "statusline"); strings.TrimSpace(out) != "" {
 		t.Errorf("garbage input printed %q", out)
 	}
@@ -434,6 +563,514 @@ func TestInstallRoundTrip(t *testing.T) {
 	}
 }
 
+// A Codex installed from npm shows as "node" in tmux; sleep stands in for
+// it. The hook command names the agent, and the pane's command is all the
+// deck needs to know it is still there.
+func TestCodexAgent(t *testing.T) {
+	h := newHarness(t)
+	a := h.tmux("split-window", "-d", "-t", "alpha", "-P", "-F", "#{pane_id}", "sleep 100000")
+	h.eventually(func() bool { return h.opt(a, "pane_current_command") == "sleep" }, "codex stand-in running")
+	steps := []struct{ event, extra, state string }{
+		{"SessionStart", `,"source":"startup"`, "idle"},
+		{"UserPromptSubmit", "", "running"},
+		{"PermissionRequest", `,"tool_name":"apply_patch"`, "waiting"},
+		{"PostToolUse", "", "running"},
+		{"Interrupt", "", "idle"},
+		{"UserPromptSubmit", "", "running"},
+	}
+	for _, s := range steps {
+		h.hookAs("codex", a, s.event, s.extra)
+		if got := h.opt(a, "@deck_state"); got != s.state {
+			t.Fatalf("after %s: state %q, want %q", s.event, got, s.state)
+		}
+	}
+	if got := h.opt(a, "@deck_agent"); got != "codex" {
+		t.Errorf("@deck_agent = %q", got)
+	}
+	if out := h.deck("", "list"); !strings.Contains(out, "codex · ") || !strings.Contains(out, "running") {
+		t.Errorf("list does not show the codex agent:\n%s", out)
+	}
+	if out := h.deck("", "list", "--json"); !strings.Contains(out, `"agent": "codex"`) {
+		t.Errorf("JSON lacks the agent:\n%s", out)
+	}
+	h.hookAs("codex", a, "SessionEnd", "")
+	if got := h.opt(a, "@deck_state") + h.opt(a, "@deck_agent"); got != "" {
+		t.Errorf("after SessionEnd the pane keeps %q", got)
+	}
+}
+
+func TestCodexInstallMergesAndRestores(t *testing.T) {
+	h := newHarness(t)
+	file := filepath.Join(t.TempDir(), "hooks.json")
+	original := "{\n  \"hooks\": {\n    \"SessionStart\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"other-tool hook\"\n          }\n        ]\n      }\n    ]\n  }\n}\n"
+	if err := os.WriteFile(file, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run := func(version string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command(h.bin, args...)
+		cmd.Env = append(h.env(""), "DECK_CODEX_VERSION="+version)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("deck %v: %v\n%s", args, err, out)
+		}
+		return string(out)
+	}
+	out := run("codex-cli 0.132.0", "install", "--codex", "--apply", "--settings", file)
+	b, _ := os.ReadFile(file)
+	for _, want := range []string{"other-tool hook", `"PermissionRequest"`, "hook --agent codex", "# tmux-agent-deck"} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("hooks file lacks %q:\n%s", want, b)
+		}
+	}
+	// 0.132 knows neither event: naming one could invalidate the file.
+	if strings.Contains(string(b), "Interrupt") || strings.Contains(string(b), "SessionEnd") {
+		t.Errorf("installed an event this Codex does not know:\n%s", b)
+	}
+	if !strings.Contains(out, "/hooks") || !strings.Contains(out, "no SessionEnd or Interrupt") {
+		t.Errorf("install does not say what the user must do and what is missing:\n%s", out)
+	}
+	run("codex-cli 0.159.3", "install", "--codex", "--apply", "--settings", file)
+	if b, _ := os.ReadFile(file); !strings.Contains(string(b), `"Interrupt"`) || !strings.Contains(string(b), `"SessionEnd"`) ||
+		strings.Count(string(b), "hook --agent codex") != 8 {
+		t.Errorf("a newer Codex should get all eight events, once each:\n%s", b)
+	}
+	run("", "uninstall", "--codex", "--apply", "--settings", file)
+	if b, _ := os.ReadFile(file); string(b) != original {
+		t.Errorf("uninstall did not restore the file:\n%s", b)
+	}
+}
+
+// cat stands in for an agent's input box: what the deck types shows up on
+// its screen, and nothing runs it.
+func TestSendAndInterruptReachOnlyALiveAgent(t *testing.T) {
+	h := newHarness(t)
+	a := h.tmux("split-window", "-d", "-t", "alpha", "-P", "-F", "#{pane_id}", "cat")
+	h.eventually(func() bool { return h.opt(a, "pane_current_command") == "cat" }, "stand-in running")
+	h.hook(a, "UserPromptSubmit", "")
+
+	// Text that would be a second tmux command, or a shell command, if any
+	// layer parsed it.
+	text := `use Postgres; kill-server ; $(touch /tmp/deck-should-not-exist) 'q' "q" #{pane_id}`
+	h.deck("", "send", a, text)
+	h.eventually(func() bool { return strings.Contains(h.tmux("capture-pane", "-p", "-J", "-t", a), text) }, "the text to reach the agent verbatim")
+	// cat echoes a submitted line back: the text appears twice once Enter landed.
+	h.eventually(func() bool {
+		return strings.Count(h.tmux("capture-pane", "-p", "-J", "-t", a), "use Postgres") == 2
+	}, "the prompt to be submitted")
+	h.deck("from stdin\n", "send", "--no-enter", a)
+	h.eventually(func() bool { return strings.Count(h.tmux("capture-pane", "-p", "-J", "-t", a), "from stdin") == 1 }, "unsubmitted text from stdin")
+	if buffers := h.tmux("list-buffers"); strings.Contains(buffers, "deck-send") {
+		t.Errorf("a send buffer was left behind: %s", buffers)
+	}
+
+	// The agent exits and the pane becomes something else: nothing is typed.
+	h.tmux("respawn-pane", "-k", "-t", a, "sh -c 'cat > /dev/null'")
+	h.eventually(func() bool { return h.opt(a, "pane_current_command") != "cat" }, "agent replaced")
+	for _, args := range [][]string{{"send", a, "rm -rf /"}, {"interrupt", a}} {
+		cmd := exec.Command(h.bin, args...)
+		cmd.Env = h.env("")
+		if out, err := cmd.CombinedOutput(); err == nil || !strings.Contains(string(out), "runs no agent") {
+			t.Errorf("deck %v on a dead agent: %v %s", args, err, out)
+		}
+	}
+	if screen := h.tmux("capture-pane", "-p", "-t", a); strings.Contains(screen, "rm -rf") {
+		t.Errorf("text reached a pane whose agent exited:\n%s", screen)
+	}
+	if buffers := h.tmux("list-buffers"); strings.Contains(buffers, "deck-send") {
+		t.Errorf("a refused send left its buffer behind: %s", buffers)
+	}
+
+	// Interrupt presses Esc in a live agent: cat -v shows it as ^[.
+	b := h.tmux("split-window", "-d", "-t", "alpha", "-P", "-F", "#{pane_id}", "cat -v")
+	h.eventually(func() bool { return h.opt(b, "pane_current_command") == "cat" }, "second stand-in running")
+	h.hook(b, "UserPromptSubmit", "")
+	h.deck("", "interrupt", b)
+	h.eventually(func() bool { return strings.Contains(h.tmux("capture-pane", "-p", "-t", b), "^[") }, "Esc to reach the agent")
+}
+
+func TestPopupPreviewsTheSelectedAgent(t *testing.T) {
+	h := newHarness(t)
+	a := h.tmux("split-window", "-d", "-t", "alpha", "-P", "-F", "#{pane_id}",
+		`printf 'Do you want to proceed?\n  1. Yes\n  2. No\n'; exec `+h.fake)
+	h.eventually(func() bool { return h.opt(a, "pane_current_command") == "2.1.999" }, "fake claude")
+	h.hook(a, "UserPromptSubmit", "")
+	h.hook(a, "PermissionRequest", `,"tool_name":"Bash"`)
+	h.tmux("set-environment", "-g", "DECK_TMUX_SOCKET", h.socket)
+	popup := h.tmux("new-window", "-d", "-P", "-F", "#{pane_id}", h.bin+" popup")
+	h.eventually(func() bool {
+		screen := h.tmux("capture-pane", "-p", "-t", popup)
+		return strings.Contains(screen, "· permission Bash ·") && strings.Contains(screen, "Do you want to proceed?")
+	}, "the popup to show the waiting agent's dialog")
+}
+
+func TestListFiltersAndReportsBranch(t *testing.T) {
+	h := newHarness(t)
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".git", "HEAD"), []byte("ref: refs/heads/feat/oauth\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a := h.tmux("split-window", "-d", "-t", "alpha", "-c", repo, "-P", "-F", "#{pane_id}", h.fake)
+	b := h.agent("alpha")
+	h.eventually(func() bool { return h.opt(a, "pane_current_command") == "2.1.999" }, "fake claude in the repository")
+	h.hook(a, "UserPromptSubmit", "")
+	h.hook(a, "PermissionRequest", `,"tool_name":"Bash"`)
+	h.hook(b, "UserPromptSubmit", "")
+
+	var items []map[string]any
+	if err := json.Unmarshal([]byte(h.deck("", "list", "--json", "--filter", "state:waiting branch:oauth")), &items); err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("filter kept %d agents, want the one waiting in the repository: %v", len(items), items)
+	}
+	want := map[string]any{"pane": a, "state": "waiting", "reason": "permission Bash", "agent": "claude",
+		"branch": "feat/oauth", "session_id": "sess-" + strings.TrimPrefix(a, "%")}
+	for k, v := range want {
+		if items[0][k] != v {
+			t.Errorf("%s = %v, want %v", k, items[0][k], v)
+		}
+	}
+	for _, k := range []string{"target", "name", "path", "age_seconds"} {
+		if _, ok := items[0][k]; !ok {
+			t.Errorf("JSON lacks %q: %v", k, items[0])
+		}
+	}
+	if out := h.deck("", "list", "--filter", "state:running"); !strings.Contains(out, "running") || strings.Contains(out, "waiting") {
+		t.Errorf("text list with a filter:\n%s", out)
+	}
+}
+
+func TestGeminiAgent(t *testing.T) {
+	h := newHarness(t)
+	a := h.tmux("split-window", "-d", "-t", "alpha", "-P", "-F", "#{pane_id}", "sleep 100000")
+	h.eventually(func() bool { return h.opt(a, "pane_current_command") == "sleep" }, "gemini stand-in running")
+	steps := []struct{ event, extra, state string }{
+		{"SessionStart", `,"source":"startup"`, "idle"},
+		{"BeforeAgent", "", "running"},
+		{"BeforeModel", "", "running"},
+		{"BeforeTool", `,"tool_name":"run_shell_command"`, "running"},
+		{"Notification", `,"notification_type":"ToolPermission"`, "waiting"},
+		// Denied: no tool runs, and the next model call is all Gemini says.
+		{"BeforeModel", "", "running"},
+		{"AfterAgent", "", "done"},
+	}
+	for _, s := range steps {
+		h.hookAs("gemini", a, s.event, s.extra)
+		if got := h.opt(a, "@deck_state"); got != s.state {
+			t.Fatalf("after %s: state %q, want %q", s.event, got, s.state)
+		}
+	}
+	if out := h.deck("", "list"); !strings.Contains(out, "gemini · ") {
+		t.Errorf("list does not show the gemini agent:\n%s", out)
+	}
+
+	settings := filepath.Join(t.TempDir(), "settings.json")
+	original := "{\n  \"theme\": \"dark\"\n}\n"
+	if err := os.WriteFile(settings, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h.deck("", "install", "--gemini", "--apply", "--settings", settings)
+	b, _ := os.ReadFile(settings)
+	for _, want := range []string{`"BeforeAgent"`, `"AfterAgent"`, "hook --agent gemini", `"timeout": 5000`, `"theme": "dark"`} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("settings lack %q:\n%s", want, b)
+		}
+	}
+	if strings.Contains(string(b), "statusLine") || strings.Contains(string(b), "UserPromptSubmit") {
+		t.Errorf("Claude's settings leaked into Gemini's:\n%s", b)
+	}
+	h.deck("", "uninstall", "--gemini", "--apply", "--settings", settings)
+	if b, _ := os.ReadFile(settings); string(b) != original {
+		t.Errorf("uninstall did not restore the file:\n%s", b)
+	}
+}
+
+// The opencode plugin runs under node here, fed the events opencode would
+// publish, and reports through the real deck binary to the real tmux server.
+func TestOpenCodePlugin(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not available to run the opencode plugin")
+	}
+	h := newHarness(t)
+	dir := t.TempDir()
+	plugin := filepath.Join(dir, "plugins", "tmux-agent-deck.js")
+	if out := h.deck("", "install", "--opencode", "--settings", plugin); !strings.Contains(out, "Preview only") {
+		t.Fatalf("install without --apply did not preview:\n%s", out)
+	}
+	out := h.deck("", "install", "--opencode", "--apply", "--settings", plugin)
+	src, err := os.ReadFile(plugin)
+	// The deck stores its own path with symlinks resolved.
+	bin, _ := filepath.EvalSymlinks(h.bin)
+	if err != nil || !strings.Contains(string(src), `const DECK = "`+bin+`"`) || !strings.Contains(out, "Restart opencode") {
+		t.Fatalf("plugin not written with the deck's path: %v\n%s", err, out)
+	}
+	// node only loads ES modules from .mjs outside a package.
+	module := filepath.Join(dir, "plugin.mjs")
+	if err := os.WriteFile(module, src, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a := h.tmux("split-window", "-d", "-t", "alpha", "-P", "-F", "#{pane_id}", "sleep 100000")
+	h.eventually(func() bool { return h.opt(a, "pane_current_command") == "sleep" }, "opencode stand-in running")
+
+	run := func(body string) {
+		t.Helper()
+		driver := filepath.Join(dir, "driver.mjs")
+		script := `const m = await import(process.argv[2])
+const hooks = await m.TmuxAgentDeck({})
+const ev = (type, properties) => hooks.event({ event: { type, properties } })
+const main = "ses_main"
+` + body
+		if err := os.WriteFile(driver, []byte(script), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command(node, driver, module)
+		cmd.Env = h.env(a)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("plugin failed: %v\n%s", err, out)
+		}
+	}
+	state := func() string { return h.opt(a, "@deck_state") }
+
+	run(`await ev("session.created", { sessionID: main, info: { id: main } })
+await hooks["chat.message"]({ sessionID: main })
+await hooks["tool.execute.before"]({ tool: "bash", sessionID: main })
+await ev("permission.asked", { sessionID: main, permission: "bash" })
+// The task tool's child session: its end is not the end of the turn.
+await ev("session.created", { sessionID: "ses_child", info: { id: "ses_child", parentID: main } })
+await hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_child" })
+await ev("session.idle", { sessionID: "ses_child" })
+`)
+	if got, why := state(), h.opt(a, "@deck_reason"); got != "waiting" || why != "permission bash" {
+		t.Fatalf("after permission.asked: %q %q, want waiting for bash", got, why)
+	}
+	if got := h.opt(a, "@deck_agent"); got != "opencode" {
+		t.Errorf("@deck_agent = %q", got)
+	}
+	run(`await ev("permission.replied", { sessionID: main, reply: "reject" })
+`)
+	if got := state(); got != "running" {
+		t.Fatalf("after a rejected permission: %q, want running", got)
+	}
+	run(`await ev("question.asked", { sessionID: main })
+`)
+	if got, why := state(), h.opt(a, "@deck_reason"); got != "waiting" || why != "question" {
+		t.Fatalf("after question.asked: %q %q", got, why)
+	}
+	// Two assistant messages, the second updated while it streamed, and a
+	// child session's message that must not be billed to this agent.
+	run(`await ev("question.replied", { sessionID: main })
+await hooks["tool.execute.after"]({ tool: "bash", sessionID: main })
+const msg = (id, sessionID, cost, input, output) => ev("message.updated", { info: {
+  id, sessionID, role: "assistant", modelID: "big-model", cost,
+  tokens: { input, output, reasoning: 10, cache: { read: 100, write: 0 } } } })
+await ev("session.created", { sessionID: "ses_child", info: { id: "ses_child", parentID: main } })
+await msg("m1", main, 0.25, 1000, 200)
+await msg("m2", main, 0.01, 5, 1)
+await msg("m2", main, 0.5, 2000, 300)
+await msg("m9", "ses_child", 9, 9000, 9000)
+await ev("message.updated", { info: { id: "u1", sessionID: main, role: "user" } })
+await ev("session.idle", { sessionID: main })
+`)
+	if got := state(); got != "done" {
+		t.Fatalf("after session.idle: %q, want done", got)
+	}
+	var listed []struct {
+		Usage struct {
+			Model        string  `json:"model"`
+			CostUSD      float64 `json:"cost_usd"`
+			InputTokens  int64   `json:"input_tokens"`
+			OutputTokens int64   `json:"output_tokens"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal([]byte(h.deck("", "list", "--json", "--filter", "pane:"+a)), &listed); err != nil || len(listed) != 1 {
+		t.Fatalf("list: %v %v", err, listed)
+	}
+	if u := listed[0].Usage; u.Model != "big-model" || u.CostUSD != 0.75 || u.InputTokens != 3200 || u.OutputTokens != 520 {
+		t.Errorf("usage = %+v, want big-model, $0.75, 3200 in, 520 out", u)
+	}
+	run(`await hooks["chat.message"]({ sessionID: main })
+await ev("session.error", { sessionID: main, error: { name: "MessageAbortedError" } })
+await ev("session.idle", { sessionID: main })
+`)
+	if got := state(); got != "idle" {
+		t.Fatalf("after an aborted turn: %q, want idle", got)
+	}
+	// Events arrive in the order they happened even though nothing waits.
+	trace := h.deck("", "events", "--pane", a)
+	order := []string{"idle -> running", "running -> waiting", "waiting -> running", "running -> waiting", "waiting -> running", "running -> done", "done -> running", "running -> idle"}
+	at := 0
+	for _, want := range order {
+		i := strings.Index(trace[at:], want)
+		if i < 0 {
+			t.Fatalf("events out of order, %q missing after offset %d:\n%s", want, at, trace)
+		}
+		at += i + len(want)
+	}
+	run(`await ev("session.deleted", { sessionID: main, info: { id: main } })
+`)
+	if got := state(); got != "" {
+		t.Errorf("after session.deleted: %q", got)
+	}
+
+	// A plugin somebody else wrote at that path is never overwritten.
+	foreign := filepath.Join(dir, "foreign.js")
+	if err := os.WriteFile(foreign, []byte("export const Mine = async () => ({})\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(h.bin, "install", "--opencode", "--apply", "--settings", foreign)
+	cmd.Env = h.env("")
+	if out, err := cmd.CombinedOutput(); err == nil || !strings.Contains(string(out), "not the deck's plugin") {
+		t.Errorf("overwrote a foreign plugin: %v %s", err, out)
+	}
+	h.deck("", "uninstall", "--opencode", "--apply", "--settings", plugin)
+	if _, err := os.Stat(plugin); !os.IsNotExist(err) {
+		t.Errorf("uninstall left the plugin: %v", err)
+	}
+}
+
+func TestEventsFollowAndWait(t *testing.T) {
+	h := newHarness(t)
+	a := h.agent("alpha")
+	h.hook(a, "UserPromptSubmit", "")
+
+	follow := exec.Command(h.bin, "events", "--follow", "--json", "--pane", a)
+	follow.Env = h.env("")
+	stdout, err := follow.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := follow.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = follow.Process.Kill(); _ = follow.Wait() }()
+	lines := make(chan string, 16)
+	go func() {
+		sc := bufio.NewScanner(stdout)
+		for sc.Scan() {
+			lines <- sc.Text()
+		}
+		close(lines)
+	}()
+	next := func(want string) {
+		t.Helper()
+		select {
+		case line := <-lines:
+			if !strings.Contains(line, want) {
+				t.Fatalf("followed event %q lacks %q", line, want)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("no event containing %q arrived", want)
+		}
+	}
+	next(`"to":"running"`) // the history comes first
+
+	// A script waits for the agent to need it, while the agent works.
+	wait := exec.Command(h.bin, "wait", "--timeout", "10s", a)
+	wait.Env = h.env("")
+	var waited bytes.Buffer
+	wait.Stdout, wait.Stderr = &waited, &waited
+	if err := wait.Start(); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(300 * time.Millisecond)
+	if wait.ProcessState != nil {
+		t.Fatalf("wait returned while the agent was running: %s", waited.String())
+	}
+	h.hook(a, "PermissionRequest", `,"tool_name":"Bash"`)
+	next(`"to":"waiting"`)
+	if err := wait.Wait(); err != nil || strings.TrimSpace(waited.String()) != "waiting" {
+		t.Fatalf("wait = %v %q, want it to print waiting", err, waited.String())
+	}
+	h.hook(a, "PostToolUse", "")
+	next(`"to":"running"`)
+
+	// Already in a wanted state: returns at once.
+	if out := h.deck("", "wait", "--state", "running", a); strings.TrimSpace(out) != "running" {
+		t.Errorf("wait --state running = %q", out)
+	}
+	for _, args := range [][]string{
+		{"wait", "--state", "done", "--timeout", "300ms", a}, // never gets there
+		{"wait", "--state", "sleeping", a},
+		{"wait", "%999"},
+	} {
+		cmd := exec.Command(h.bin, args...)
+		cmd.Env = h.env("")
+		if out, err := cmd.CombinedOutput(); err == nil {
+			t.Errorf("deck %v succeeded: %s", args, out)
+		}
+	}
+}
+
+func TestRenameCopyTimelineAndAttention(t *testing.T) {
+	h := newHarness(t)
+	a := h.tmux("split-window", "-d", "-t", "alpha", "-P", "-F", "#{pane_id}",
+		`printf 'unique-output-line\nDo you want to proceed?\n  1. Yes\n'; exec `+h.fake)
+	quiet := h.agent("alpha")
+	h.eventually(func() bool { return h.opt(a, "pane_current_command") == "2.1.999" }, "fake claude")
+	h.hook(a, "SessionStart", `,"source":"startup"`)
+	h.hook(a, "UserPromptSubmit", "")
+	h.hook(a, "PermissionRequest", `,"tool_name":"Bash"`)
+	h.hook(quiet, "SessionStart", `,"source":"startup"`)
+
+	if got := h.opt(a, "@deck_started"); got == "" {
+		t.Error("the session's start was not recorded")
+	}
+	var items []map[string]any
+	if err := json.Unmarshal([]byte(h.deck("", "list", "--json", "--filter", "pane:"+a)), &items); err != nil || len(items) != 1 {
+		t.Fatalf("list: %v %v", err, items)
+	}
+	if at, _ := items[0]["started_at"].(float64); at < 1 {
+		t.Errorf("started_at = %v", items[0]["started_at"])
+	}
+
+	// A label with what would end a tmux command, or split the pane listing.
+	h.deck("", "rename", a, "billing\tfix ; kill-server;")
+	if got := h.opt(a, "@deck_name"); got != "billing fix ; kill-server" {
+		t.Errorf("@deck_name = %q", got)
+	}
+	if out := h.deck("", "list"); !strings.Contains(out, "billing fix ; kill-server") || !strings.Contains(out, "idle") {
+		t.Errorf("list after rename:\n%s", out)
+	}
+	h.deck("", "rename", a, "billing")
+
+	// The popup opens on the agents that need you when the option says so,
+	// with the selected one's last state changes above its screen.
+	h.tmux("set-option", "-g", "@deck-popup-attention", "on")
+	h.tmux("set-environment", "-g", "DECK_TMUX_SOCKET", h.socket)
+	popup := h.tmux("new-window", "-d", "-P", "-F", "#{pane_id}", h.bin+" popup")
+	var screen string
+	h.eventually(func() bool {
+		screen = h.tmux("capture-pane", "-p", "-t", popup)
+		return strings.Contains(screen, "── billing · permission Bash ·") && strings.Contains(screen, "running -> waiting") &&
+			strings.Contains(screen, "Do you want to proceed?")
+	}, "the popup to show the label, the timeline and the screen")
+	if strings.Contains(screen, "alpha:0."+h.opt(quiet, "pane_index")+" ") || !strings.Contains(screen, "needing you only") {
+		t.Errorf("the popup did not open on the agents that need you:\n%s", screen)
+	}
+
+	h.tmux("send-keys", "-t", popup, "y")
+	h.eventually(func() bool {
+		// show-buffer fails until there is a buffer.
+		out, _ := exec.Command("tmux", "-L", h.socket, "show-buffer").Output()
+		return strings.Contains(string(out), "unique-output-line")
+	}, "the agent's output in the paste buffer")
+	h.eventually(func() bool { return strings.Contains(h.tmux("capture-pane", "-p", "-t", popup), "copied ") }, "the popup to say it copied")
+
+	h.tmux("send-keys", "-t", popup, "r")
+	h.tmux("send-keys", "-t", popup, "-l", " v2")
+	h.tmux("send-keys", "-t", popup, "Enter")
+	h.eventually(func() bool { return h.opt(a, "@deck_name") == "billing v2" }, "the rename from the popup")
+	h.deck("", "rename", a)
+	if got := h.opt(a, "@deck_name"); got != "" {
+		t.Errorf("label not removed: %q", got)
+	}
+}
+
 func TestDoctorReportsAHealthySetup(t *testing.T) {
 	h := newHarness(t)
 	claude := t.TempDir()
@@ -445,7 +1082,7 @@ func TestDoctorReportsAHealthySetup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("doctor failed: %v\n%s", err, out)
 	}
-	for _, want := range []string{"✔ tmux 3.3 or newer", "✔ focus-events on", "✔ Claude hooks", "✔ statusLine"} {
+	for _, want := range []string{"✔ tmux 3.2 or newer", "✔ focus-events on", "✔ Claude hooks", "✔ statusLine"} {
 		if !strings.Contains(string(out), want) {
 			t.Errorf("doctor output lacks %q:\n%s", want, out)
 		}

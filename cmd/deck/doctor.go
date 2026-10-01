@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -41,13 +42,23 @@ func runDoctor(_ []string) error {
 	// The server's version, not the tmux on PATH: they can differ.
 	out, err := c.Run("display-message", "-p", "#{version}")
 	v := "tmux " + strings.TrimSpace(out)
-	check(err == nil && tmuxAtLeast(v, 3, 3), "tmux 3.3 or newer (server)", v)
+	check(err == nil && tmuxAtLeast(v, 3, 2), "tmux 3.2 or newer (server)", v)
 	fe, _ := c.Run("show-options", "-gv", "focus-events")
 	check(strings.TrimSpace(fe) == "on", "focus-events on", "needed to repair Esc and denied prompts when you leave a pane")
 	icon, _ := c.Run("show-options", "-gqv", "@deck_pane_icon")
 	check(strings.TrimSpace(icon) != "", "tmux-init has run", "icons, keys and tmux hooks")
 	hooks, _ := c.Run("show-hooks", "-g")
 	check(strings.Contains(hooks, " focus "), "focus hooks set", "")
+	keys, _ := c.Run("list-keys", "-T", "prefix")
+	check(strings.Contains(keys, " popup") && strings.Contains(keys, "sidebar toggle"), "keys bound",
+		"the popup and sidebar keys; another plugin or a later bind-key may have taken them")
+	if sound, _ := c.Run("show-options", "-gqv", "@deck-sound"); strings.TrimSpace(sound) != "off" {
+		player, _ := c.Run("show-options", "-gqv", "@deck-sound-command")
+		if f := strings.Fields(player); len(f) > 0 {
+			_, err := exec.LookPath(f[0])
+			check(err == nil, "sound player", f[0]+"; set @deck-sound off or @deck-sound-command if it is missing")
+		}
+	}
 
 	settings, err := os.ReadFile(defaultSettingsPath())
 	if err != nil {
@@ -76,16 +87,35 @@ func runDoctor(_ []string) error {
 		}
 		_ = json.Unmarshal(settings, &parsed)
 		switch {
+		case parsed.StatusLine != nil && strings.Contains(parsed.StatusLine.Command, install.WrapFlag):
+			check(true, "statusLine", "yours is shown, and the deck records token usage and plan limits from it")
 		case parsed.StatusLine != nil && strings.Contains(parsed.StatusLine.Command, install.Marker):
 			check(true, "statusLine", "the deck records token usage and plan limits")
 		case parsed.StatusLine != nil:
-			check(true, "statusLine", "yours is kept, so token usage and plan limits are not shown")
+			check(true, "statusLine", "yours is kept, so token usage and plan limits are not shown; deck install --claude --wrap-statusline --apply keeps yours and records them")
 		default:
 			check(false, "statusLine", "not set; deck install --claude --apply adds it for usage and plan limits")
 		}
 		if strings.Contains(string(settings), "window-status-style") {
 			check(false, "no old tab coloring hooks", "a hook still sets window-status-style and will fight the deck's icons")
 		}
+	}
+
+	// Other agents are only reported once the deck is installed for them.
+	if hooksFile, err := os.ReadFile(codexHooksPath()); err == nil {
+		if events, _ := install.Owned(hooksFile); len(events) > 0 {
+			check(true, "Codex hooks", strconv.Itoa(len(events))+" events; they run only once trusted with /hooks in Codex")
+		}
+	}
+
+	if settings, err := os.ReadFile(geminiSettingsPath()); err == nil {
+		if events, _ := install.Owned(settings); len(events) > 0 {
+			check(true, "Gemini CLI hooks", strconv.Itoa(len(events))+" events")
+		}
+	}
+	if plugin, err := os.ReadFile(opencodePluginPath()); err == nil && strings.Contains(string(plugin), install.Marker) {
+		_, statErr := os.Stat(strings.Trim(between(string(plugin), `const DECK = "`, `"`), " "))
+		check(statErr == nil, "opencode plugin", "installed; run deck install --opencode --apply again if the deck has moved")
 	}
 
 	dir := store.DefaultDir()
@@ -95,6 +125,27 @@ func runDoctor(_ []string) error {
 	if panes, err := c.ListPanes(); err == nil {
 		rows := ui.Agents(panes, time.Now())
 		check(true, "agents visible", fmt.Sprintf("%d (%s)", len(rows), ui.Summary(ui.Counts(rows), false)))
+		stale, here := 0, map[string]bool{}
+		for _, p := range panes {
+			here[p.SID] = p.SID != ""
+			if p.State != "" && p.Sidebar == "" && !p.Alive() {
+				stale++
+			}
+		}
+		detail := ""
+		if stale > 0 {
+			detail = fmt.Sprintf("%d panes keep a state after their agent exited; opening a view clears them", stale)
+		}
+		check(stale == 0, "no stale agents", detail)
+		orphans := 0
+		for _, f := range files {
+			if !here[strings.TrimSuffix(filepath.Base(f), ".json")] {
+				orphans++
+			}
+		}
+		if orphans > 0 {
+			check(true, "session records", fmt.Sprintf("%d without a pane on this server; they are pruned after 72 hours", orphans))
+		}
 	}
 	if !ok {
 		return fmt.Errorf("some checks failed")
@@ -113,6 +164,16 @@ func tmuxAtLeast(v string, major, minor int) bool {
 	maj, _ := strconv.Atoi(m[1])
 	mnr, _ := strconv.Atoi(m[2])
 	return maj > major || (maj == major && mnr >= minor)
+}
+
+// between is the text after the first start and before the next end.
+func between(s, start, end string) string {
+	_, rest, ok := strings.Cut(s, start)
+	if !ok {
+		return ""
+	}
+	out, _, _ := strings.Cut(rest, end)
+	return out
 }
 
 func contains(list []string, s string) bool {

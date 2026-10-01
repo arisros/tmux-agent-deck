@@ -1,4 +1,6 @@
-// Package hook turns a Claude Code hook payload into a machine event.
+// Package hook decodes hook payloads and turns Claude Code's into machine
+// events. Other agents that share the payload shape map theirs in package
+// agent.
 //
 // The mapping follows sequences recorded from real sessions (see
 // test/fixtures), not only the documentation. Notably: a denied permission and
@@ -11,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/arisros/tmux-agent-deck/internal/machine"
 )
@@ -21,9 +24,13 @@ type Payload struct {
 	Event            string          `json:"hook_event_name"`
 	SessionID        string          `json:"session_id"`
 	NotificationType string          `json:"notification_type"`
+	ToolName         string          `json:"tool_name"`
 	AgentID          string          `json:"agent_id"`
 	Source           string          `json:"source"`
 	BackgroundTasks  json.RawMessage `json:"background_tasks"`
+	// Agent names the agent that sent the payload. It comes from the hook
+	// command line (deck hook --agent), never from the payload.
+	Agent string `json:"-"`
 }
 
 // Decode reads one payload.
@@ -65,18 +72,47 @@ func Map(p Payload, now int64) (Action, machine.Event) {
 	case "PostToolUse", "PostToolUseFailure":
 		return Send, machine.ToolEnd{At: now, Subagent: p.AgentID != ""}
 	case "PermissionRequest":
-		return Send, machine.Permission{At: now}
+		if p.ToolName == "AskUserQuestion" {
+			return Send, machine.Permission{At: now, Reason: machine.ReasonQuestion}
+		}
+		return Send, machine.Permission{At: now, Reason: machine.ReasonPermission, Tool: ToolClass(p.ToolName)}
 	case "Stop":
 		return Send, machine.Stop{At: now, Background: Count(p.BackgroundTasks)}
 	case "Notification":
 		switch p.NotificationType {
-		case "permission_prompt", "elicitation_dialog", "elicitation_url_dialog", "agent_needs_input":
-			return Send, machine.NeedsInput{At: now}
+		case "permission_prompt":
+			return Send, machine.NeedsInput{At: now, Reason: machine.ReasonPermission}
+		case "elicitation_dialog", "elicitation_url_dialog":
+			return Send, machine.NeedsInput{At: now, Reason: machine.ReasonElicitation}
+		case "agent_needs_input":
+			return Send, machine.NeedsInput{At: now, Reason: machine.ReasonInput}
 		case "idle_prompt":
 			return Send, machine.IdlePrompt{At: now}
 		}
 	}
 	return Ignore, nil
+}
+
+// ToolClass is the tool name the deck keeps. MCP tool names embed the server
+// name, which can identify internal systems, so they collapse to "mcp".
+//
+// What is left is cut to the characters a tool name is made of: it is shown,
+// logged and handed to tmux, and must not be able to end a command there.
+func ToolClass(name string) string {
+	if strings.HasPrefix(name, "mcp__") {
+		return "mcp"
+	}
+	name = strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '-', r == '.':
+			return r
+		}
+		return -1
+	}, name)
+	if len(name) > 32 {
+		name = name[:32]
+	}
+	return name
 }
 
 // Count is the number of items in a list, object, or number field; 0 when it

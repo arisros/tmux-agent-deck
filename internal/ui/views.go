@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/arisros/tmux-agent-deck/internal/machine"
 	"github.com/arisros/tmux-agent-deck/internal/usage"
 )
 
@@ -32,9 +33,30 @@ type List struct {
 	Cursor    int
 	Filter    string
 	Filtering bool
-	// Confirming is set after "x": the next key decides whether the agent
-	// under the cursor is killed.
+	// Confirming is set after "x" or "i": the next key decides whether the
+	// agent under the cursor is killed or interrupted.
 	Confirming bool
+	pending    Outcome
+	// Composing is set after "p": keys go to Draft until enter sends it to
+	// the agent under the cursor, or esc drops it.
+	Composing bool
+	Draft     string
+	// Renaming is set after "r": keys go to Draft until enter names the
+	// agent under the cursor, an empty name giving it back its own title.
+	Renaming bool
+	// Reply is what a Send, Answer or Rename outcome asks the caller to deliver.
+	Reply string
+	// Note is a one-line result of the last action, shown until the next key.
+	Note string
+	// Timeline is the recent state changes of the previewed agent.
+	Timeline []string
+	// Attention, toggled with "a", keeps only the agents that need the
+	// user: waiting or done.
+	Attention bool
+	// PreviewOf is the pane whose screen Preview holds; the popup shows it
+	// under the list while that pane is the one under the cursor.
+	PreviewOf string
+	Preview   []string
 	// Current is the pane the user is in, marked apart from the cursor.
 	Current string
 	// Top is the first row the sidebar shows; it only moves to keep the
@@ -51,21 +73,8 @@ type List struct {
 	Now time.Time
 }
 
-// Visible is All narrowed by the filter.
-func (l *List) Visible() []Row {
-	if l.Filter == "" {
-		return l.All
-	}
-	f := strings.ToLower(l.Filter)
-	var out []Row
-	for _, r := range l.All {
-		hay := strings.ToLower(r.Name + " " + r.Target() + " " + r.Path + " " + r.State)
-		if strings.Contains(hay, f) {
-			out = append(out, r)
-		}
-	}
-	return out
-}
+// Visible is All narrowed by the filter and the attention toggle.
+func (l *List) Visible() []Row { return Filter(l.All, l.Filter, l.Attention) }
 
 // Selected is the row under the cursor.
 func (l *List) Selected() (Row, bool) {
@@ -105,9 +114,36 @@ const (
 	Jump
 	Quit
 	Kill
+	// Seen marks a done agent as looked at, without jumping to it.
+	Seen
+	// Interrupt stops the agent's turn, as Esc in its pane would.
+	Interrupt
+	// Send delivers List.Reply to the agent as a prompt.
+	Send
+	// Answer presses the one key in List.Reply in the agent's dialog.
+	Answer
+	// Copy puts the agent's recent output in the tmux paste buffer.
+	Copy
+	// Rename labels the agent List.Reply; empty removes the label.
+	Rename
 )
 
-// Handle applies a key: vim motions and arrows, "/" to filter, enter to jump.
+// SetPreview stores pane's screen for the popup to show, without the blank
+// lines a screen usually ends in.
+func (l *List) SetPreview(pane, screen string) {
+	l.PreviewOf = pane
+	l.Preview = strings.Split(strings.TrimRight(screen, "\n \t"), "\n")
+}
+
+// previewing reports whether the row under the cursor is the one on show: a
+// dialog is only answered while the user can read it.
+func (l *List) previewing() bool {
+	r, ok := l.Selected()
+	return ok && l.PreviewOf != "" && r.ID == l.PreviewOf
+}
+
+// Handle applies a key: vim motions and arrows, "/" to filter, enter to jump,
+// and the actions on the agent under the cursor.
 func (l *List) Handle(k Key) Outcome {
 	switch k.Name {
 	case "wheelup", "wheeldown":
@@ -122,10 +158,36 @@ func (l *List) Handle(k Key) Outcome {
 		return Stay
 	}
 	l.scrolled = false
+	l.Note = ""
 	if l.Confirming {
 		l.Confirming = false
 		if k.Rune == 'y' || k.Rune == 'Y' {
-			return Kill
+			return l.pending
+		}
+		return Stay
+	}
+	if l.Composing || l.Renaming {
+		switch {
+		case k.Name == "enter":
+			renaming := l.Renaming
+			l.Composing, l.Renaming = false, false
+			l.Reply, l.Draft = l.Draft, ""
+			if renaming {
+				return Rename
+			}
+			if l.Reply != "" {
+				return Send
+			}
+		case k.Name == "esc":
+			l.Composing, l.Renaming, l.Draft = false, false, ""
+		case k.Name == "backspace":
+			if r := []rune(l.Draft); len(r) > 0 {
+				l.Draft = string(r[:len(r)-1])
+			}
+		case k.Name == "ctrl-c":
+			return Quit
+		case k.Rune != 0:
+			l.Draft += string(k.Rune)
 		}
 		return Stay
 	}
@@ -163,9 +225,37 @@ func (l *List) Handle(k Key) Outcome {
 		return Jump
 	case k.Rune == '/':
 		l.Filtering = true
+	case k.Rune == 'a':
+		l.Attention = !l.Attention
+		l.Cursor = 0
 	case k.Rune == 'x':
 		if _, ok := l.Selected(); ok {
-			l.Confirming = true
+			l.Confirming, l.pending = true, Kill
+		}
+	case k.Rune == 'i':
+		if r, ok := l.Selected(); ok && (r.State == machine.Running || r.State == machine.Waiting) {
+			l.Confirming, l.pending = true, Interrupt
+		}
+	case k.Rune == 's':
+		if r, ok := l.Selected(); ok && r.State == machine.Done {
+			return Seen
+		}
+	case k.Rune == 'p':
+		if _, ok := l.Selected(); ok {
+			l.Composing = true
+		}
+	case k.Rune == 'r':
+		if r, ok := l.Selected(); ok {
+			l.Renaming, l.Draft = true, r.Label
+		}
+	case k.Rune == 'y':
+		if _, ok := l.Selected(); ok {
+			return Copy
+		}
+	case k.Rune >= '1' && k.Rune <= '9':
+		if r, ok := l.Selected(); ok && r.State == machine.Waiting && l.previewing() {
+			l.Reply = string(k.Rune)
+			return Answer
 		}
 	case k.Name == "esc" || k.Rune == 'q' || k.Name == "ctrl-c":
 		return Quit
@@ -184,11 +274,32 @@ func Popup(l *List, w, h int) []string {
 	lines = append(lines, dim+strings.Repeat("─", w)+reset)
 	// " ◆ " + state + age + target + name + ctx + tokens + cost + folder,
 	// one space between columns.
-	nameW := w - 3 - (8 + 1) - (4 + 1) - (20 + 1) - 1 - (10 + 1) - (7 + 1) - (7 + 1) - 14
+	// The last column is the folder, and grows to hold a branch once any
+	// agent works in a repository.
+	whereW := 14
+	for _, r := range rows {
+		if r.Branch != "" {
+			whereW = 26
+			break
+		}
+	}
+	nameW := w - 3 - (labelW + 1) - (4 + 1) - (20 + 1) - 1 - (10 + 1) - (7 + 1) - (7 + 1) - whereW
 	if nameW < 8 {
 		nameW = 8
 	}
-	body := h - len(lines) - 1
+	// The list keeps the lines its rows need, and at least half; the screen
+	// of the agent under the cursor gets the rest.
+	body, shown := h-len(lines)-1, 0
+	if l.PreviewOf != "" && body >= 12 {
+		need := len(rows)
+		if need < 1 {
+			need = 1
+		}
+		if shown = body - need; shown < body/2 {
+			shown = body / 2
+		}
+		body -= shown
+	}
 	start := 0
 	if cur := l.clamp(len(rows)); cur >= body {
 		start = cur - body + 1
@@ -196,11 +307,15 @@ func Popup(l *List, w, h int) []string {
 	for i := start; i < len(rows) && i < start+body; i++ {
 		r := rows[i]
 		st := StyleOf(r.State)
+		name := r.Name
+		if tags := r.Tags(); tags != "" {
+			name = dim + tags + reset + name
+		}
 		line := fmt.Sprintf("%s%s%s%s %s %s %s %s %s %s",
 			l.marker(r), st.Color, st.Glyph, reset,
-			stateLabel(r.State), Fit(Age(r.Age), 4), Fit(r.Target(), 20), Fit(r.Name, nameW),
+			stateLabel(r), Fit(Age(r.Age), 4), Fit(r.Target(), 20), Fit(name, nameW),
 			UsageCols(r),
-			dim+Fit(filepath.Base(r.Path), 14)+reset)
+			dim+Fit(r.Where(), whereW)+reset)
 		switch {
 		case i == l.Cursor:
 			line = reverse + stripReset(line)
@@ -212,11 +327,55 @@ func Popup(l *List, w, h int) []string {
 	if len(rows) == 0 {
 		lines = append(lines, dim+" no agents"+reset)
 	}
-	for len(lines) < h-1 {
+	for len(lines) < h-1-shown {
 		lines = append(lines, "")
 	}
-	lines = append(lines, footer(l, w, "j/k move · enter jump · / filter · x kill · q close"))
+	if shown > 0 {
+		lines = append(lines, previewLines(l, w, shown)...)
+	}
+	lines = append(lines, footer(l, w, "enter jump · / filter · a attention · p send · 1-9 answer · i interrupt · s seen · y copy · r rename · x kill · q close"))
 	return lines
+}
+
+// previewLines is the bottom of the selected agent's screen under a rule
+// that names it, exactly n lines.
+func previewLines(l *List, w, n int) []string {
+	title := ""
+	var screen []string
+	if r, ok := l.Selected(); ok && l.previewing() {
+		title, screen = " "+r.Name+" ", l.Preview
+		if r.State == machine.Waiting && r.Reason != "" {
+			title += "· " + r.Reason + " "
+		}
+		if r.Started > 0 {
+			title += "· session " + Age(l.now().Sub(time.Unix(r.Started, 0))) + " "
+		}
+	}
+	out := []string{dim + Fit("──"+title+strings.Repeat("─", w), w) + reset}
+	// The last few state changes sit above the screen, when there is room
+	// for both.
+	if l.previewing() && n >= 12 {
+		recent := l.Timeline
+		if len(recent) > 4 {
+			recent = recent[len(recent)-4:]
+		}
+		for _, line := range recent {
+			out = append(out, dim+Fit(" "+line, w)+reset)
+		}
+		if len(recent) > 0 {
+			out = append(out, dim+" "+strings.Repeat("┄", w-1)+reset)
+		}
+	}
+	if room := n - len(out); len(screen) > room {
+		screen = screen[len(screen)-room:]
+	}
+	for _, line := range screen {
+		out = append(out, Fit(" "+strings.ReplaceAll(line, "\t", " "), w))
+	}
+	for len(out) < n {
+		out = append(out, "")
+	}
+	return out
 }
 
 // Sidebar renders one session's agents in a narrow column, plus a summary of
@@ -237,18 +396,29 @@ func Sidebar(l *List, others []Row, session string, focused bool, w, h int) []st
 	for i := first; i < last; i++ {
 		r := rows[i]
 		st := StyleOf(r.State)
-		head := l.marker(r) + st.Color + st.Glyph + reset + " " + Fit(r.Name, w-3)
-		detail := r.Window + "." + r.Index + " · " + Age(r.Age) + " · " + filepath.Base(r.Path)
+		label := r.Name
+		if r.Agent != "" && r.Agent != "claude" {
+			label = r.Agent + " · " + label
+		}
+		head := l.marker(r) + st.Color + st.Glyph + reset + " " + Fit(label, w-3)
+		where := filepath.Base(r.Path)
+		if r.Branch != "" {
+			where = r.Branch
+		}
+		detail := r.Window + "." + r.Index + " · " + Age(r.Age) + " · " + where
 		if r.Usage != nil && r.Usage.ContextUsed != nil {
 			detail = r.Window + "." + r.Index + " · " + Bar(*r.Usage.ContextUsed, 5) + dim +
 				fmt.Sprintf(" %.0f%%", *r.Usage.ContextUsed) + " · " + Age(r.Age)
 		}
+		if r.State == machine.Waiting && r.Reason != "" {
+			detail = r.Window + "." + r.Index + " · " + r.Reason + " · " + Age(r.Age)
+		}
 		sub := l.marker(r) + dim + "  " + Fit(detail, w-3) + reset
 		switch {
 		case focused && i == cur:
-			head = reverse + " " + st.Glyph + " " + Fit(r.Name, w-3)
+			head = reverse + " " + st.Glyph + " " + Fit(label, w-3)
 		case r.ID == l.Current:
-			head = hereBar + hereBg + st.Color + st.Glyph + reset + hereBg + " " + bold + Fit(r.Name, w-3) + reset
+			head = hereBar + hereBg + st.Color + st.Glyph + reset + hereBg + " " + bold + Fit(label, w-3) + reset
 			sub = hereBar + hereBg + dim + "  " + Fit(detail, w-3) + reset
 		}
 		lines = append(lines, head, sub)
@@ -272,7 +442,7 @@ func Sidebar(l *List, others []Row, session string, focused bool, w, h int) []st
 		other = "other sessions: none"
 	}
 	lines = append(lines, " "+Fit(other, w-1))
-	help := "j/k · enter · x kill · q"
+	help := "enter · p send · i · s · y · r · x · q"
 	if !focused {
 		help = "C-h to pick"
 	}
@@ -283,8 +453,28 @@ func Sidebar(l *List, others []Row, session string, focused bool, w, h int) []st
 func footer(l *List, w int, help string) string {
 	if l.Confirming {
 		if r, ok := l.Selected(); ok {
-			return "\x1b[1;31m" + " " + Fit("kill "+r.Name+"? y/n", w-1) + reset
+			verb := "kill "
+			if l.pending == Interrupt {
+				verb = "interrupt "
+			}
+			return "\x1b[1;31m" + " " + Fit(verb+r.Name+"? y/n", w-1) + reset
 		}
+	}
+	if l.Composing {
+		to := ""
+		if r, ok := l.Selected(); ok {
+			to = r.Name
+		}
+		return " " + Fit(dim+"to "+to+" > "+reset+l.Draft+"▏", w-1)
+	}
+	if l.Renaming {
+		return " " + Fit(dim+"name (empty to reset) > "+reset+l.Draft+"▏", w-1)
+	}
+	if l.Note != "" {
+		return " " + Fit(l.Note, w-1)
+	}
+	if l.Attention && !l.Filtering && l.Filter == "" {
+		help = "needing you only, a for all · " + help
 	}
 	if l.Filtering || l.Filter != "" {
 		cursor := ""
@@ -304,12 +494,20 @@ func stripReset(s string) string {
 	return strings.ReplaceAll(s, dim, "")
 }
 
-// stateLabel is the state column; a waiting agent's label shouts.
-func stateLabel(state string) string {
-	if state == "waiting" {
-		return "\x1b[1;31m" + Fit(state, 8) + reset
+// labelW fits the longest reason a waiting agent shows, "permission".
+const labelW = 10
+
+// stateLabel is the state column; a waiting agent's label shouts, and names
+// what it waits for when the deck knows.
+func stateLabel(r Row) string {
+	if r.State != machine.Waiting {
+		return Fit(r.State, labelW)
 	}
-	return Fit(state, 8)
+	label := r.State
+	if cause, _ := r.Why(); cause != "" {
+		label = cause
+	}
+	return "\x1b[1;31m" + Fit(label, labelW) + reset
 }
 
 // window picks the rows the sidebar shows (two lines each) in body lines,

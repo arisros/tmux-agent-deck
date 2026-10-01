@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/arisros/tmux-agent-deck/internal/agent"
+	"github.com/arisros/tmux-agent-deck/internal/events"
 	"github.com/arisros/tmux-agent-deck/internal/hook"
 	"github.com/arisros/tmux-agent-deck/internal/machine"
 	"github.com/arisros/tmux-agent-deck/internal/tmux"
@@ -325,7 +327,7 @@ func TestClassify(t *testing.T) {
 		"$ ls\nfoo\n":         "",
 	}
 	for screen, want := range cases {
-		if got := Classify(screen); got != want {
+		if got := agent.Claude.Classify(screen); got != want {
 			t.Errorf("Classify(%q) = %q, want %q", screen, got, want)
 		}
 	}
@@ -335,25 +337,38 @@ func TestClassify(t *testing.T) {
 // adapter. The screen step stands in for the footer check a view or a
 // focus change runs, since those sequences end without any hook.
 func TestFixtures(t *testing.T) {
+	const (
+		prompt  = "Prompt idle>running hook"
+		askBash = "Permission running>waiting hook permission Bash"
+		resumed = "ToolEnd waiting>running hook"
+		stopped = "Stop running>done hook"
+		seen    = "Screen waiting>idle screen"
+	)
 	cases := map[string]struct {
 		hooksOnly string // state after the recorded hooks
 		screen    string // screen seen afterwards, "" for none
 		final     string
+		trace     []string // every state change, in order
 	}{
-		"permission-approve":  {machine.Done, "", machine.Done},
-		"permission-deny-esc": {machine.Waiting, screenIdle, machine.Idle},
-		"permission-deny-no":  {machine.Waiting, screenIdle, machine.Idle},
-		"esc-during-tool":     {machine.Waiting, screenIdle, machine.Idle},
-		"esc-queued-prompt":   {machine.Done, "", machine.Done},
-		"subagent":            {machine.Done, "", machine.Done},
-		"background-bash":     {machine.Done, "", machine.Done},
-		"ask-user-question":   {machine.Done, "", machine.Done},
-		"session-start-exit":  {"", "", ""},
+		"permission-approve":  {machine.Done, "", machine.Done, []string{prompt, askBash, resumed, stopped}},
+		"permission-deny-esc": {machine.Waiting, screenIdle, machine.Idle, []string{prompt, askBash, seen}},
+		"permission-deny-no":  {machine.Waiting, screenIdle, machine.Idle, []string{prompt, askBash, seen}},
+		"esc-during-tool":     {machine.Waiting, screenIdle, machine.Idle, []string{prompt, askBash, seen}},
+		"esc-queued-prompt":   {machine.Done, "", machine.Done, []string{prompt, askBash, "Prompt waiting>running hook", stopped}},
+		"subagent":            {machine.Done, "", machine.Done, []string{prompt, stopped}},
+		"background-bash":     {machine.Done, "", machine.Done, []string{prompt, askBash, resumed, "IdlePrompt running>done hook"}},
+		"ask-user-question":   {machine.Done, "", machine.Done, []string{prompt, "Permission running>waiting hook question", resumed, stopped}},
+		"session-start-exit":  {"", "", "", []string{"Begin idle>idle hook", prompt, stopped, "End > hook"}},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
 			f := newFake()
 			d := newDeck(t, f)
+			var trace []string
+			d.Emit = func(e events.Event) {
+				trace = append(trace, strings.TrimSpace(strings.Join(
+					[]string{e.Kind, e.From + ">" + e.To, e.Source, strings.TrimSpace(e.Reason + " " + e.Tool)}, " ")))
+			}
 			for _, line := range readFixture(t, name) {
 				send(t, d, "%1", line)
 			}
@@ -369,7 +384,177 @@ func TestFixtures(t *testing.T) {
 			if got := f.state("%1"); got != c.final {
 				t.Errorf("final: %q, want %q", got, c.final)
 			}
+			if got, want := strings.Join(trace, "\n"), strings.Join(c.trace, "\n"); got != want {
+				t.Errorf("trace:\n%s\nwant:\n%s", got, want)
+			}
 		})
+	}
+}
+
+// A recording nobody replays protects nothing.
+func TestEveryFixtureIsReplayed(t *testing.T) {
+	src, err := os.ReadFile("deck_test.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, _ := filepath.Glob(filepath.Join("..", "..", "test", "fixtures", "*.jsonl"))
+	if len(files) == 0 {
+		t.Fatal("no fixtures found")
+	}
+	for _, f := range files {
+		name := strings.TrimSuffix(filepath.Base(f), ".jsonl")
+		if !strings.Contains(string(src), `"`+name+`":`) {
+			t.Errorf("fixture %s has no row in TestFixtures", name)
+		}
+	}
+}
+
+func TestSweepForgetsExitedAgents(t *testing.T) {
+	f := newFake()
+	d := newDeck(t, f)
+	var kinds []string
+	d.Emit = func(e events.Event) { kinds = append(kinds, e.Kind+" "+e.Pane) }
+	send(t, d, "%1", ev("UserPromptSubmit", ""))
+	send(t, d, "%2", `{"hook_event_name":"UserPromptSubmit","session_id":"s2"}`)
+	kinds = nil
+
+	n := d.Sweep([]tmux.Pane{
+		{ID: "%1", State: machine.Running, SID: "s1", Command: "zsh", Cmd: "node"},
+		{ID: "%2", State: machine.Running, SID: "s2", Command: "node", Cmd: "node"},
+		{ID: "%3", Command: "zsh"},
+		{ID: "%4", State: machine.Idle, Command: "zsh", Sidebar: "1"},
+	})
+	if n != 1 || strings.Join(kinds, ",") != "Exit %1" {
+		t.Fatalf("swept %d (%v), want only the pane whose agent exited", n, kinds)
+	}
+	if f.state("%1") != "" || f.state("%2") != machine.Running {
+		t.Errorf("states after sweep: %q %q", f.state("%1"), f.state("%2"))
+	}
+	if _, err := os.Stat(filepath.Join(d.Dir, "s1.json")); !os.IsNotExist(err) {
+		t.Errorf("the exited agent's record survives: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(d.Dir, "s2.json")); err != nil {
+		t.Errorf("the live agent's record is gone: %v", err)
+	}
+}
+
+func codexEvent(name, extra string) string {
+	return fmt.Sprintf(`{"hook_event_name":%q,"session_id":"c1"%s}`, name, extra)
+}
+
+func sendAs(t *testing.T, d *Deck, name, pane, payload string) {
+	t.Helper()
+	p, err := hook.Decode(strings.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Agent = name
+	if err := d.Hook(p, pane); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A Codex turn through the adapter: its payloads name no agent, the hook
+// command does, and from then on the record does.
+func TestCodexTurn(t *testing.T) {
+	f := newFake()
+	d := newDeck(t, f)
+	var trace []string
+	d.Emit = func(e events.Event) { trace = append(trace, e.Kind+" "+e.From+">"+e.To) }
+	steps := []struct{ event, extra, state string }{
+		{"SessionStart", `,"source":"startup"`, machine.Idle},
+		{"UserPromptSubmit", "", machine.Running},
+		{"PreToolUse", `,"tool_name":"Bash"`, machine.Running},
+		{"PermissionRequest", `,"tool_name":"Bash"`, machine.Waiting},
+		{"PostToolUse", `,"tool_name":"Bash"`, machine.Running},
+		{"Stop", "", machine.Done},
+		{"UserPromptSubmit", "", machine.Running},
+		{"Interrupt", "", machine.Idle},
+	}
+	for _, s := range steps {
+		sendAs(t, d, "codex", "%9", codexEvent(s.event, s.extra))
+		if got := f.state("%9"); got != s.state {
+			t.Fatalf("after %s: %q, want %q", s.event, got, s.state)
+		}
+	}
+	if got := f.opts["%9/@deck_agent"]; got != "codex" {
+		t.Errorf("@deck_agent = %q", got)
+	}
+	want := "Begin idle>idle,Prompt idle>running,Permission running>waiting,ToolEnd waiting>running,Stop running>done,Prompt done>running,Interrupt running>idle"
+	if got := strings.Join(trace, ","); got != want {
+		t.Errorf("trace:\n%s\nwant:\n%s", got, want)
+	}
+
+	// A screen check reads the session's own agent: Claude's markers on a
+	// Codex pane prove nothing, Codex's dialog does.
+	sendAs(t, d, "codex", "%9", codexEvent("UserPromptSubmit", ""))
+	f.screen = screenIdle
+	if err := d.Reconcile("%9", "c1", machine.Running); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.state("%9"); got != machine.Running {
+		t.Errorf("Claude's idle screen moved a Codex agent to %q", got)
+	}
+	f.screen = "Would you like to run the following command?\n› 1. Yes, proceed (y)\n"
+	if err := d.Reconcile("%9", "c1", machine.Running); err != nil {
+		t.Fatal(err)
+	}
+	if got, why := f.state("%9"), f.opts["%9/@deck_reason"]; got != machine.Waiting || why != "dialog" {
+		t.Errorf("Codex dialog on screen: %q %q, want waiting dialog", got, why)
+	}
+
+	sendAs(t, d, "codex", "%9", codexEvent("SessionEnd", ""))
+	if got := f.state("%9"); got != "" {
+		t.Errorf("state after SessionEnd = %q", got)
+	}
+	p, _ := hook.Decode(strings.NewReader(codexEvent("Stop", "")))
+	p.Agent = "nope"
+	if err := d.Hook(p, "%9"); err == nil {
+		t.Error("an unknown agent was accepted")
+	}
+}
+
+func TestNotifyCommandGetsStatePaneAndReason(t *testing.T) {
+	f := newFake()
+	d := newDeck(t, f)
+	send(t, d, "%7", ev("UserPromptSubmit", ""))
+	send(t, d, "%7", ev("PermissionRequest", `,"tool_name":"Bash"`))
+	send(t, d, "%7", ev("PostToolUse", ""))
+	send(t, d, "%7", ev("Stop", ""))
+	got := f.sounds()
+	if len(got) != 2 {
+		t.Fatalf("%d alerts, want one for waiting and one for done: %q", len(got), got)
+	}
+	for i, want := range []string{
+		`run-shell -b '#{@deck-notify-command} waiting %7 permission Bash'`,
+		`run-shell -b '#{@deck-notify-command} done %7'`,
+	} {
+		if !strings.Contains(got[i], want) || !strings.Contains(got[i], `if-shell -F "#{@deck-notify-command}"`) {
+			t.Errorf("alert %d = %q, want it to run %q when the option is set", i, got[i], want)
+		}
+	}
+}
+
+func TestReasonIsPublishedAndCleared(t *testing.T) {
+	f := newFake()
+	d := newDeck(t, f)
+	why := func() string { return f.opts["%1/@deck_reason"] }
+	send(t, d, "%1", ev("UserPromptSubmit", ""))
+	send(t, d, "%1", ev("PermissionRequest", `,"tool_name":"Bash","tool_input":{"command":"secret"}`))
+	if got := why(); got != "permission Bash" {
+		t.Fatalf("reason = %q, want permission Bash", got)
+	}
+	send(t, d, "%1", ev("PostToolUse", ""))
+	if _, set := f.opts["%1/@deck_reason"]; set {
+		t.Errorf("reason still %q after the approval", why())
+	}
+	send(t, d, "%1", ev("PermissionRequest", `,"tool_name":"AskUserQuestion"`))
+	if got := why(); got != "question" {
+		t.Errorf("reason = %q, want question", got)
+	}
+	send(t, d, "%1", ev("SessionEnd", ""))
+	if _, set := f.opts["%1/@deck_reason"]; set {
+		t.Errorf("reason survives the session: %q", why())
 	}
 }
 
@@ -385,9 +570,9 @@ func readFixture(t *testing.T, name string) []string {
 	sc := bufio.NewScanner(file)
 	for sc.Scan() {
 		var r struct {
-			Event, NotificationType, Source, Reason string
-			BackgroundTasks                         *int `json:"background_tasks"`
-			Subagent                                bool
+			Event, NotificationType, Source, Reason, Tool string
+			BackgroundTasks                               *int `json:"background_tasks"`
+			Subagent                                      bool
 		}
 		if err := json.Unmarshal(sc.Bytes(), &r); err != nil {
 			t.Fatal(err)
@@ -402,6 +587,9 @@ func readFixture(t *testing.T, name string) []string {
 		}
 		if r.Source != "" {
 			p["source"] = r.Source
+		}
+		if r.Tool != "" {
+			p["tool_name"] = r.Tool
 		}
 		if r.Subagent {
 			p["agent_id"] = "a1"

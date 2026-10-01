@@ -20,7 +20,11 @@ import (
 
 // Record is what the deck remembers about a session.
 type Record struct {
-	Pane     string          `json:"pane"`
+	Pane string `json:"pane"`
+	// Agent names the agent of the session; empty is Claude Code.
+	Agent string `json:"agent,omitempty"`
+	// Started is when the deck first heard from the session, in unix seconds.
+	Started  int64           `json:"started,omitempty"`
 	Snapshot json.RawMessage `json:"snapshot,omitempty"`
 }
 

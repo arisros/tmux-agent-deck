@@ -15,26 +15,28 @@ stateDiagram-v2
     s_done --> s_running : Prompt / since
     s_done --> s_running : Screen [working] / since
     s_done --> s_running : ToolStart / since
-    s_done --> s_waiting : NeedsInput / since
-    s_done --> s_waiting : Permission / since
-    s_done --> s_waiting : Screen [dialog] / since
+    s_done --> s_waiting : NeedsInput / since,why
+    s_done --> s_waiting : Permission / since,why
+    s_done --> s_waiting : Screen [dialog] / since,why
     s_idle --> s_idle : Begin / since
     s_idle --> s_running : Prompt / since
     s_idle --> s_running : Screen [working] / since
     s_idle --> s_running : ToolStart / since
-    s_idle --> s_waiting : NeedsInput / since
-    s_idle --> s_waiting : Permission / since
-    s_idle --> s_waiting : Screen [dialog] / since
+    s_idle --> s_waiting : NeedsInput / since,why
+    s_idle --> s_waiting : Permission / since,why
+    s_idle --> s_waiting : Screen [dialog] / since,why
     s_running --> s_done : IdlePrompt / since
     s_running --> s_done : Stop / since,bg
     s_running --> s_idle : Begin / since
+    s_running --> s_idle : Interrupt / since
     s_running --> s_idle : Screen [idle] / since
     s_running --> s_running : Stop [background] / bg
-    s_running --> s_waiting : NeedsInput / since
-    s_running --> s_waiting : Permission / since
-    s_running --> s_waiting : Screen [dialog] / since
+    s_running --> s_waiting : NeedsInput / since,why
+    s_running --> s_waiting : Permission / since,why
+    s_running --> s_waiting : Screen [dialog] / since,why
     s_waiting --> s_done : Stop / since,bg
     s_waiting --> s_idle : Begin / since
+    s_waiting --> s_idle : Interrupt / since
     s_waiting --> s_idle : Screen [idle] / since
     s_waiting --> s_running : Prompt / since
     s_waiting --> s_running : Screen [answered] / since

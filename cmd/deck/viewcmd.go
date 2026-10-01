@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/arisros/tmux-agent-deck/internal/deck"
+	"github.com/arisros/tmux-agent-deck/internal/events"
+	"github.com/arisros/tmux-agent-deck/internal/git"
 	"github.com/arisros/tmux-agent-deck/internal/store"
 	"github.com/arisros/tmux-agent-deck/internal/tmux"
 	"github.com/arisros/tmux-agent-deck/internal/ui"
@@ -31,15 +33,15 @@ const staleAfter = 2 * time.Second
 // sidebar restores @deck-sidebar-width.
 const minSidebarWidth = 20
 
-// agents lists panes once, repairs stale busy agents, and lists again only
-// when a repair may have changed something.
+// agents lists panes once, forgets agents that have exited, repairs stale
+// busy agents, and lists again only when one of those changed something.
 func agents(d *deck.Deck, c tmux.Client, repair bool) ([]tmux.Pane, []ui.Row, *usage.Limits, error) {
 	panes, rows, err := listAgents(d, c, repair)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	sessions, limits := usage.Load(usage.DefaultDir(d.Dir))
-	return panes, ui.Attach(rows, sessions), limits, nil
+	return panes, ui.Branches(ui.Attach(rows, sessions), git.Branch), limits, nil
 }
 
 func listAgents(d *deck.Deck, c tmux.Client, repair bool) ([]tmux.Pane, []ui.Row, error) {
@@ -47,7 +49,7 @@ func listAgents(d *deck.Deck, c tmux.Client, repair bool) ([]tmux.Pane, []ui.Row
 	if err != nil {
 		return nil, nil, err
 	}
-	if d.Discover(panes) > 0 {
+	if d.Sweep(panes)+d.Discover(panes) > 0 {
 		if panes, err = c.ListPanes(); err != nil {
 			return nil, nil, err
 		}
@@ -84,17 +86,19 @@ func runPopup(args []string) (err error) {
 	// with #{...} unexpanded, and the shell then drops the rest of the line
 	// as a comment. From inside the popup, tmux resolves the client that
 	// opened it and the pane that client is in.
-	client, current := "", ""
-	if out, err := c.Run("display-message", "-p", "#{client_name}\t#{pane_id}"); err == nil {
-		if f := strings.SplitN(strings.TrimSpace(out), "\t", 2); len(f) == 2 {
-			client, current = f[0], f[1]
+	client, current, attention := "", "", false
+	if out, err := c.Run("display-message", "-p", "#{client_name}\t#{pane_id}\t#{@deck-popup-attention}"); err == nil {
+		if f := strings.Split(strings.TrimRight(out, "\n"), "\t"); len(f) == 3 {
+			client, current, attention = f[0], f[1], f[2] == "on"
 		}
 	}
 	_, rows, limits, err := agents(d, c, true)
 	if err != nil {
 		return err
 	}
-	l := &ui.List{All: rows, Current: current, Limits: limits}
+	// @deck-popup-attention opens the popup on the agents that need you;
+	// "a" still shows the rest.
+	l := &ui.List{All: rows, Current: current, Limits: limits, Attention: attention}
 
 	t, err := ui.OpenTerm()
 	if err != nil {
@@ -108,8 +112,19 @@ func runPopup(args []string) (err error) {
 	defer tick.Stop()
 	anim := time.NewTicker(250 * time.Millisecond)
 	defer anim.Stop()
+	// After the deck types into a pane, its screen is read once more.
+	settle := time.NewTimer(time.Hour)
+	defer settle.Stop()
+	shown := ""
 
 	for {
+		// The screen of the agent under the cursor is read when the cursor
+		// lands on it and whenever something may have changed it, never on a
+		// timer of its own.
+		if r, ok := l.Selected(); ok && r.ID != shown {
+			preview(c, l)
+			shown = r.ID
+		}
 		w, h := t.Size()
 		t.Draw(ui.Popup(l, w, h))
 		frames := anim.C
@@ -124,7 +139,7 @@ func runPopup(args []string) (err error) {
 				logView("popup: input closed", t.Trace())
 				return nil
 			}
-			switch l.Handle(k) {
+			switch o := l.Handle(k); o {
 			case ui.Quit:
 				logView(fmt.Sprintf("popup: quit on %+v", k), t.Trace())
 				return nil
@@ -137,13 +152,64 @@ func runPopup(args []string) (err error) {
 					_, _ = c.Run("kill-pane", "-t", r.ID)
 					refresh(d, c, l, false)
 				}
+			default:
+				if act(d, c, l, o) {
+					refresh(d, c, l, false)
+					settle.Reset(300 * time.Millisecond)
+				}
 			}
+		case <-settle.C:
+			shown = ""
 		case <-changed:
 			refresh(d, c, l, false)
+			shown = ""
 		case <-tick.C:
 			refresh(d, c, l, true)
+			shown = ""
 		}
 	}
+}
+
+// preview reads the screen of the agent under the cursor into the list.
+func preview(c tmux.Client, l *ui.List) {
+	r, ok := l.Selected()
+	if !ok {
+		l.PreviewOf, l.Preview = "", nil
+		return
+	}
+	screen, err := c.Capture(r.ID)
+	if err != nil {
+		screen = ""
+	}
+	l.SetPreview(r.ID, screen)
+	l.Timeline = timeline(r)
+}
+
+// timeline is the selected agent's last state changes, one line each. A
+// pane id is reused by later sessions, so the session decides when known.
+func timeline(r ui.Row) []string {
+	all, err := events.Read(store.Root())
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range all {
+		if e.Pane != r.ID || (r.SID != "" && e.SID != "" && e.SID != r.SID) {
+			continue
+		}
+		line := time.UnixMilli(e.TS).Format("15:04:05") + "  " + dash(e.From) + " -> " + dash(e.To) + "  " + e.Kind
+		if e.Source != "" && e.Source != "hook" {
+			line += " (" + e.Source + ")"
+		}
+		if why := strings.TrimSpace(e.Reason + " " + e.Tool); why != "" {
+			line += "  " + why
+		}
+		out = append(out, line)
+	}
+	if len(out) > 8 {
+		out = out[len(out)-8:]
+	}
+	return out
 }
 
 func refresh(d *deck.Deck, c tmux.Client, l *ui.List, repair bool) {
@@ -353,7 +419,7 @@ func sidebarRun(c tmux.Client, session string) (err error) {
 			if !ok {
 				return nil
 			}
-			switch l.Handle(k) {
+			switch o := l.Handle(k); o {
 			case ui.Quit:
 				return nil
 			case ui.Jump:
@@ -364,6 +430,8 @@ func sidebarRun(c tmux.Client, session string) (err error) {
 				if r, ok := l.Selected(); ok {
 					_, _ = c.Run("kill-pane", "-t", r.ID)
 				}
+			default:
+				act(d, c, l, o)
 			}
 			load(false)
 		case <-changed:
@@ -427,6 +495,7 @@ func leaveEmptyWindow(c tmux.Client, session, self string) (bool, error) {
 func runList(args []string) error {
 	fs := flag.NewFlagSet("list", flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "print JSON")
+	filter := fs.String("filter", "", "only agents matching these terms, such as 'state:waiting branch:main'")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -438,14 +507,30 @@ func runList(args []string) error {
 	if err != nil {
 		return err
 	}
+	rows = ui.Filter(rows, *filter, false)
 	if *asJSON {
 		type item struct {
-			Pane, Target, State, Name, Path string
-			AgeSeconds                      int64 `json:"age_seconds"`
+			Pane       string         `json:"pane"`
+			Target     string         `json:"target"`
+			State      string         `json:"state"`
+			Reason     string         `json:"reason,omitempty"`
+			Agent      string         `json:"agent"`
+			Name       string         `json:"name"`
+			Path       string         `json:"path"`
+			Branch     string         `json:"branch,omitempty"`
+			SessionID  string         `json:"session_id,omitempty"`
+			StartedAt  int64          `json:"started_at,omitempty"`
+			AgeSeconds int64          `json:"age_seconds"`
+			Usage      *usage.Session `json:"usage,omitempty"`
 		}
 		out := []item{}
 		for _, r := range rows {
-			out = append(out, item{r.ID, r.Target(), r.State, r.Name, r.Path, int64(r.Age.Seconds())})
+			name := r.Agent
+			if name == "" {
+				name = "claude"
+			}
+			out = append(out, item{r.ID, r.Target(), r.State, r.Reason, name, r.Name, r.Path, r.Branch, r.SID, r.Started,
+				int64(r.Age.Seconds()), r.Usage})
 		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
@@ -456,7 +541,11 @@ func runList(args []string) error {
 	}
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	for _, r := range rows {
-		fmt.Fprintf(tw, "%s %s\t%s\t%s\t%s\t%s\n", ui.Styles[r.State].Glyph, r.State, ui.Age(r.Age), r.Target(), r.Name, r.Path)
+		state := r.State
+		if r.Reason != "" {
+			state += " (" + r.Reason + ")"
+		}
+		fmt.Fprintf(tw, "%s %s\t%s\t%s\t%s\t%s\t%s\n", ui.Styles[r.State].Glyph, state, ui.Age(r.Age), r.Target(), r.Tags()+r.Name, r.Path, r.Branch)
 	}
 	return tw.Flush()
 }

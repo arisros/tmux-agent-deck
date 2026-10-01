@@ -15,7 +15,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/arisros/tmux-agent-deck/internal/hook"
@@ -78,7 +77,7 @@ func FromHook(r io.Reader, pane string, now time.Time) (Entry, error) {
 		Session:          shortHash(p.SessionID),
 		Pane:             pane,
 		NotificationType: p.NotificationType,
-		Tool:             toolClass(p.ToolName),
+		Tool:             hook.ToolClass(p.ToolName),
 		Source:           p.Source,
 		Reason:           p.Reason,
 		AgentType:        p.AgentType,
@@ -121,12 +120,4 @@ func shortHash(s string) string {
 	}
 	sum := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(sum[:])[:12]
-}
-
-// MCP tool names embed the server name, which can identify internal systems.
-func toolClass(name string) string {
-	if strings.HasPrefix(name, "mcp__") {
-		return "mcp"
-	}
-	return name
 }

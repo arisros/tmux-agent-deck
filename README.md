@@ -1,12 +1,12 @@
 <h1 align="center">tmux-agent-deck</h1>
 
-<p align="center">See which Claude Code agents need you, which have finished, and which are still working, across every tmux session.</p>
+<p align="center">An agent control plane for tmux: see which coding agents need you and why, answer them from where you are, and script them. Claude Code, Codex, Gemini CLI and opencode, across every session.</p>
 
 <p align="center">
   <a href="https://github.com/arisros/tmux-agent-deck/actions/workflows/ci.yml"><img src="https://github.com/arisros/tmux-agent-deck/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/arisros/tmux-agent-deck/releases"><img src="https://img.shields.io/github/v/release/arisros/tmux-agent-deck?sort=semver" alt="Release"></a>
   <a href="go.mod"><img src="https://img.shields.io/github/go-mod/go-version/arisros/tmux-agent-deck" alt="Go"></a>
-  <img src="https://img.shields.io/badge/tmux-3.3%2B-1bb91f" alt="tmux 3.3+">
+  <img src="https://img.shields.io/badge/tmux-3.2%2B-1bb91f" alt="tmux 3.2+">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT"></a>
 </p>
 
@@ -15,7 +15,7 @@
 
 ## Quickstart
 
-Needs tmux 3.3+ and Claude Code. Go 1.26+ is optional: without it, the plugin downloads a release binary and checks its checksum.
+Needs tmux 3.2+ and Claude Code; the other agents are under [Agents](#agents). On tmux 3.2 the popup has no border style or title. Go 1.26+ is optional: without it, the plugin downloads a release binary and checks its checksum.
 
 ```tmux
 # ~/.tmux.conf (or ~/.config/tmux/tmux.conf), then prefix I
@@ -43,14 +43,14 @@ set -g pane-border-format           ' #{pane_title}#{E:@deck_pane_icon} '
 
 | State | Glyph | Means | Clears when |
 |---|---|---|---|
-| waiting | ◆ white on red | Claude needs you: a permission prompt or a question | you answer it |
+| waiting | ◆ white on red | Claude needs you, and the deck says for what: `permission Bash`, `question`, `elicitation`, or `dialog` when only the screen showed it | you answer it |
 | done | ✔ blue | the turn finished while you were looking elsewhere | you look at the pane |
 | running | ● green, pulsing ● ◉ ◎ ◉ | working, including background tasks Claude will resume from | the turn ends |
 | idle | ○ grey | at the prompt, and you have seen it | you send a prompt |
 
 | Where | What |
 |---|---|
-| **Popup** `prefix a` | every agent in every session, most urgent first, with context used, tokens, cost, and your plan's 5-hour and 7-day usage |
+| **Popup** `prefix a` | every agent in every session, most urgent first, with context used, tokens, cost, and your plan's 5-hour and 7-day usage; below the list, the agent under the cursor: how long its session has run, its last state changes, and its screen, so you can read a dialog and answer it from here |
 | **Sidebar** `prefix e` | this session's agents in a pane that follows you across windows, plus a one-line count of the other sessions |
 | **Tabs and borders** | the icon of the most urgent agent in each window, and of each agent pane |
 | **Sounds** | Ping when an agent starts waiting, Funk when it finishes, only for panes you are not looking at |
@@ -81,6 +81,7 @@ flowchart LR
   H -->|flock| S[(session record)]
   H -->|fate state machine| H
   H -->|one tmux call| T[(pane options)]
+  H -->|one line per state change| E[(events.jsonl)]
   T --> F[tabs and borders<br/>tmux formats, no process]
   T -->|wait-for signal| SB[sidebar]
   T --> P[popup]
@@ -121,6 +122,7 @@ The full machine, generated from the code: [docs/state-machine.md](docs/state-ma
 | background tasks or subagents still running at `Stop` | `Stop` reports them | stays running; Claude resumes by itself when they finish |
 | a turn Claude resumed after background work | no `Stop` at all | `idle_prompt` ends it |
 | an agent that was idle when you installed the plugin | none yet | read from its screen once, then hooks take over |
+| an agent that crashed or was killed | none | each hook remembers the pane's foreground command; once it changes, the agent is hidden at once and forgotten when a view opens |
 
 The screen is only trusted for Claude's explicit markers (its dialogs, the spinner line, `esc to interrupt`, `Interrupted`, `· done`). A footer that merely looks quiet proves nothing: Claude hides `esc to interrupt` while a tool runs in auto mode.
 
@@ -131,15 +133,57 @@ The screen is only trusted for Claude's explicit markers (its dialogs, the spinn
 | `j` `k`, arrows, wheel | move | move; the wheel scrolls even when unfocused |
 | `g` `G` | top, bottom | top, bottom |
 | `/` | filter | filter |
+| `a` | only the agents that need you (waiting, done) | the same |
 | Enter, `l`, → | jump to the agent, across sessions | jump to the agent |
+| `p`, text, Enter | send a prompt to the agent | the same |
+| `1` to `9` | press that key in a waiting agent's dialog, while its screen is shown | |
+| `i` then `y` | interrupt the agent's turn (Esc) | the same |
+| `s` | mark a done agent as seen | the same |
+| `y` | copy the agent's last 2000 lines to the tmux paste buffer and the clipboard | the same |
+| `r`, name, Enter | label the agent; an empty name gives it back its own title | the same |
 | `x` then `y` | kill the agent's pane | kill the agent's pane |
 | `q`, Esc | close | close the sidebar |
 
+A filter is words that must all match somewhere in the row, or `field:word` for one field: `state:waiting`, `reason:permission`, `agent:codex`, `session:work`, `branch:feat`, `path:`, `name:`, `window:`, `pane:`. Among waiting and done agents the one kept waiting longest comes first. The branch is read from the repository's own files, so no `git` process runs.
+
+`deck list --json --filter 'state:waiting'` prints the same rows for scripts: `pane`, `target`, `state`, `reason`, `agent`, `name`, `path`, `branch`, `session_id`, `started_at`, `age_seconds` and `usage`.
+
+A script can drive an agent with the same pieces, and none of them polls: they sleep inside tmux until a hook fires.
+
+```sh
+pane=%12
+deck send "$pane" "run the migration tests and fix what fails"
+case "$(deck wait --timeout 30m "$pane")" in
+waiting) deck list --json --filter "pane:$pane" | jq -r '.[0].reason' ;;  # it needs an answer
+done|idle) echo finished ;;
+esac
+deck events --follow --json | jq -r 'select(.to == "waiting") | .pane'   # every agent that starts waiting
+```
+
+The deck only types into a pane whose agent is still running: tmux checks that in the same call that sends, so a pane that fell back to a shell never receives a prompt as a command. The same actions work from a script with `deck send <pane> <text>`, `deck interrupt <pane>` and `deck rename <pane> <name>`.
+
 The sidebar keeps its place as the full-height left column: it follows you to other windows, comes back after `swap-pane`, `rotate-window` or a layout change, restores its width when squeezed, and leaves a window once it is the only pane left.
+
+## Agents
+
+| Agent | Install | Reported by hooks | Read from the screen | Usage and plan bars |
+|---|---|---|---|---|
+| Claude Code | `deck install --claude --apply` | everything but Esc and a denied permission | those two endings, and dialogs | yes, from its statusLine |
+| Codex CLI 0.124+ | `deck install --codex --apply`, then `/hooks` in Codex to trust them | prompts, tools, permission requests, the end of a turn; a closed session from 0.145, Esc from 0.150 | dialogs and work in progress | no: Codex only writes them to its transcript, which the deck does not read |
+| Gemini CLI | `deck install --gemini --apply`, then restart it | prompts, tools, permission prompts, the end of a turn | nothing | no |
+| opencode | `deck install --opencode --apply`, then restart it | prompts, tools, permission requests and their answers, questions, an aborted turn, the end of a turn | nothing | tokens and cost, counted from when opencode started; no context or plan bars |
+
+Only Claude Code's transitions are replayed from recorded sessions. The other three are built from each project's published hook or plugin interface and tested against that, so treat them as experimental until recordings exist:
+
+- **Codex**: a denied approval may show as running until your next prompt.
+- **Gemini CLI**: its hooks may not see `TMUX_PANE` when its environment redaction is on; allow that variable in its settings if no agent shows up.
+- **opencode**: the deck writes a plugin file into `~/.config/opencode/plugins/` that runs `deck hook` for each event. It reports an opencode started in a tmux pane, not one reached with `opencode attach`. Closing opencode sends no event; the agent is forgotten when its pane changes.
+
+Each hook remembers the pane's foreground command, so an agent started through a wrapper (Codex from npm runs as `node`) is tracked and forgotten like any other.
 
 ## Usage and plan limits
 
-`deck install --claude` also sets Claude Code's `statusLine` to `deck statusline`, unless you have a status line of your own.
+`deck install --claude` also sets Claude Code's `statusLine` to `deck statusline`, unless you have a status line of your own. To keep yours and still feed the deck, add `--wrap-statusline`: Claude then runs the deck, which records the numbers and prints whatever your command prints. `deck uninstall` puts your command back exactly.
 
 ```mermaid
 flowchart LR
@@ -160,19 +204,41 @@ Set them before tpm loads the plugin.
 | `@deck-popup-key` | `a` | popup key (prefix table) |
 | `@deck-sidebar-key` | `e` | sidebar toggle |
 | `@deck-sidebar-width` | `34` | sidebar width in columns |
+| `@deck-popup-attention` | `off` | open the popup on the agents that need you (waiting, done); `a` shows the rest |
 | `@deck-sidebar-pin` | `on` | put the sidebar back after swaps and layout changes |
 | `@deck-tab-pulse` | `off` | pulse running agents in tabs and borders on any terminal: one `deck tick` per second while an agent runs, and `status-interval 1` (restored when turned off). Terminals that render blinking text pulse without it. |
 | `@deck-sound` | `on` | sounds for panes you are not watching |
 | `@deck-sound-command` | `afplay` (macOS), `paplay` (Linux) | player |
 | `@deck-sound-waiting` | Ping.aiff, bell.oga | |
 | `@deck-sound-done` | Funk.aiff, complete.oga | |
+| `@deck-notify-command` | unset | a command run when an agent starts waiting or finishes, for panes you are not watching. It gets the state, the pane id and the reason: `waiting %12 permission Bash`, `done %12` |
+
+### Notifications
+
+The notify command runs inside tmux, next to the sound, so it costs no extra process until it fires. Only the state, the pane id and the reason are passed; ask tmux for anything else.
+
+```sh
+#!/bin/sh
+# ~/.config/tmux/deck-notify.sh: $1 state, $2 pane, $3 and $4 the reason
+where=$(tmux display-message -p -t "$2" '#{session_name}:#{window_index} #{pane_title}')
+case "$(uname)" in
+Darwin) osascript -e 'on run argv' -e 'display notification (item 2 of argv) with title (item 1 of argv)' -e 'end run' "agent $1 $3 $4" "$where" ;;
+*) notify-send "agent $1 $3 $4" "$where" ;;
+esac
+```
+
+```tmux
+set -g @deck-notify-command '~/.config/tmux/deck-notify.sh'
+```
+
+Anything that takes arguments works the same way: a webhook with `curl`, a chat message, a log line.
 
 ## Troubleshooting
 
 | Symptom | Look at |
 |---|---|
-| anything | `deck doctor` checks tmux, focus events, hooks, statusLine and the binary |
-| a state looks wrong | `~/.local/state/tmux-agent-deck/views.log`: every state a screen check changed, with the line it relied on, and why a view closed |
+| anything | `deck doctor` checks tmux, focus events, keys, hooks, statusLine, the sound player, stale agents and the binary |
+| a state looks wrong | `deck events` lists every state change with what caused it (a hook, the screen, your focus); `--pane %12` narrows it, `--json` prints lines. It logs the stored state, so a turn you watched end reads `done` where the pane shows idle. `~/.local/state/tmux-agent-deck/views.log` adds the screen line a check relied on, and why a view closed |
 | the plugin did not load | `bin/install.log` and `bin/init.log` in the plugin directory |
 | old hook scripts color tabs or play sounds | remove them from `~/.claude/settings.json`; `deck doctor` flags tab coloring |
 | remove everything | `deck uninstall --claude --apply`, then the `@plugin` line |
@@ -193,8 +259,10 @@ flowchart LR
   cmd[cmd/deck] --> deck[internal/deck<br/>adapter]
   cmd --> ui[internal/ui<br/>popup, sidebar]
   cmd --> install[internal/install<br/>settings.json]
+  deck --> events[internal/events<br/>state change log]
   deck --> machine[internal/machine<br/>fate statechart]
-  deck --> hook[internal/hook<br/>payload to event]
+  deck --> agent[internal/agent<br/>Claude, Codex, Gemini, opencode]
+  agent --> hook[internal/hook<br/>payload to event]
   deck --> store[internal/store<br/>flock records]
   deck --> tmux[internal/tmux]
   ui --> usage[internal/usage<br/>statusLine data]
@@ -208,9 +276,16 @@ Integration tests start their own `tmux -L deck-test-*` servers and never touch 
 - [x] popup across sessions, sidebar per session, tab and border icons
 - [x] token usage and plan limits from the statusLine
 - [x] release binaries with a checksummed download in the tpm entrypoint
-- [ ] Homebrew tap
-- [ ] a preview of the selected agent in the popup
-- [ ] other agents (Codex, opencode)
+- [x] why an agent is waiting, and a log of state changes
+- [x] agents that exited are cleared, and a stricter `deck doctor`
+- [x] a command to run when an agent needs you
+- [x] tmux 3.2, tested in CI next to 3.3
+- [x] Codex, Gemini CLI and opencode
+- [x] a preview you can answer from, `deck send`, `deck wait`, `deck events --follow`
+- [ ] recorded sessions for Codex, Gemini CLI and opencode, to replace what was read from their documentation
+- [ ] recordings of the Claude Code cases still missing: resume, compaction, a crash, a failed tool, an elicitation
+
+What is left, the rules every change keeps, what was declined and why, and the non-goals: [docs/roadmap.md](docs/roadmap.md).
 
 ## Prior art
 

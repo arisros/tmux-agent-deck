@@ -29,23 +29,42 @@ func buildVersion() string {
 const usageText = `usage: deck <command> [flags]
 
 views:
-  popup                                agents of every session, most urgent first; enter jumps, x kills
+  popup                                agents of every session, most urgent first, with the selected one's screen;
+                                       enter jumps, p sends a prompt, 1-9 answers a dialog, i interrupts, s marks seen,
+                                       y copies its output, r renames it, x kills
   sidebar toggle --session S --window W   this session's agents in a pane that follows you
-  list [--json]                        print the agents and the plan usage
+  list [--json] [--filter TERMS]       print the agents and the plan usage
+  events [--pane P] [-n N] [--json] [--follow]
+                                       print the log of state changes, oldest first; --follow keeps printing
+
+act on an agent (only ever a pane whose agent is still running):
+  send [--no-enter] <pane> [text...]   type a prompt into the agent and submit it; text from stdin when omitted
+  interrupt <pane>                     stop the agent's turn, as Esc in its pane would
+  rename <pane> [name...]              label the agent in the views; no name gives it back its own title
+  wait [--state S,S] [--timeout D] <pane>
+                                       block until the agent is waiting, done or idle (or the states given), print which
 
 setup:
-  install --claude [--record] [--apply] [--settings FILE]
-                                       add the hooks and statusLine to Claude settings (preview by default)
-  uninstall --claude [--apply] [--settings FILE]
-                                       remove every deck hook and the deck's statusLine
+  install --claude [--record] [--wrap-statusline] [--apply] [--settings FILE]
+                                       add the hooks and statusLine to Claude settings (preview by default);
+                                       --wrap-statusline keeps a statusLine of your own and records usage through it
+  install --codex [--record] [--apply] [--settings FILE]
+                                       add the hooks to Codex's hooks.json; trust them with /hooks in Codex
+  install --gemini [--record] [--apply] [--settings FILE]
+                                       add the hooks to Gemini CLI's settings.json
+  install --opencode [--apply] [--settings FILE]
+                                       write the plugin that reports opencode's events
+  uninstall --claude|--codex|--gemini|--opencode [--apply] [--settings FILE]
+                                       remove every deck hook, the deck's statusLine from Claude, or the plugin
   doctor                               check the installation
   tmux-init                            bind keys, set tmux hooks and formats (run by the tpm entrypoint)
   describe                             print the state machine as Mermaid
   version, --version, -h, --help
 
-called by Claude Code and tmux, not by hand:
-  hook [--record]                      apply a hook event read from stdin
+called by the agents and tmux, not by hand:
+  hook [--agent NAME] [--record]       apply a hook event read from stdin
   statusline                           record usage and plan limits, print Claude's status line
+  usage                                record the usage another agent reports about a session, read from stdin
   focus <pane>                         the user looked at pane: a done agent becomes idle
   reconcile <pane>                     correct a running or waiting agent from its screen
   sidebar run --session S              the sidebar process itself
@@ -56,18 +75,24 @@ called by Claude Code and tmux, not by hand:
 // commands is the dispatch table; the usage text is tested against it.
 var commands = map[string]func(args []string) error{
 	"hook":      func(a []string) error { return runHook(a, os.Stdin) },
+	"usage":     func([]string) error { return runUsage(os.Stdin) },
 	"focus":     runFocus,
 	"reconcile": runReconcile,
 	"popup":     runPopup,
 	"sidebar":   runSidebar,
 	"list":      runList,
+	"events":    runEvents,
+	"send":      func(a []string) error { return runSend(a, os.Stdin) },
+	"interrupt": runInterrupt,
+	"wait":      runWait,
+	"rename":    runRename,
 	"tmux-init": runTmuxInit,
 	"install":   func(a []string) error { return runInstall(a, true) },
 	"uninstall": func(a []string) error { return runInstall(a, false) },
 	"doctor":    runDoctor,
 	"describe":  func([]string) error { return runDescribe() },
-	"statusline": func([]string) error {
-		runStatusLine(os.Stdin)
+	"statusline": func(a []string) error {
+		runStatusLine(a, os.Stdin)
 		return nil
 	},
 	"tick": func([]string) error {

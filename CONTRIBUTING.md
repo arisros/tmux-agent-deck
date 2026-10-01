@@ -7,18 +7,58 @@ issue first so we can agree on the shape.
 
 - **Event-driven.** Nothing may poll or keep a process running between events.
   A hook makes at most one tmux call, and views block in `tmux wait-for`.
-- **Never guess a state.** A screen check only acts on Claude's explicit
+- **Never guess a state.** A screen check only acts on an agent's explicit
   markers; when unsure, the state is left alone.
+- **Nothing private is kept.** Hooks decode the event, the session id and the
+  tool name. Prompts, tool arguments and pane titles are never stored, logged
+  or passed to a shell.
+- **Only a live agent is typed into.** Anything the deck sends to a pane goes
+  through `ifAlive`, which checks inside tmux, in the same call, that the
+  agent is still there.
 - **Every exported symbol is documented**, and every change comes with a test.
   A bug fix comes with a test that fails without it.
 - **Tests never touch your tmux.** Integration tests start private servers
   with `tmux -L deck-test-*`; keep it that way.
 
+## Compatibility
+
+People put these in their tmux.conf, scripts and status lines, so they only
+change with a `BREAKING CHANGE:` footer and a line in the changelog:
+
+| Surface | What is stable |
+|---|---|
+| tmux options a user sets | every `@deck-*` name and its values |
+| tmux formats a user embeds | `@deck_window_icon`, `@deck_pane_icon`, `@deck_state`, `@deck_reason`, `@deck_agent` |
+| keys | the two prefix keys and their options; keys inside the views may grow |
+| command line | every command and flag in `deck --help`, the keys of `deck list --json` and `deck events --json`, and the arguments of the notify command |
+| settings files | the deck only ever adds or removes entries carrying its marker, and uninstall restores the file |
+
+Not stable: the state directory's files, the other `@deck_*` pane options,
+and the hook command line the installer writes (reinstalling refreshes it).
+The oldest supported tmux is the oldest one CI runs.
+
+## Adding an agent
+
+An agent is one value in `internal/agent`: how its hook payloads map to
+machine events, what its screen proves, and how its process is recognized.
+Nothing else in the code knows which agent it is talking to.
+
+1. Record first. `deck install --<agent> --record --apply` where the agent
+   has hooks; the mapping follows what sessions really emit, not only what
+   the documentation says.
+2. Add the mapping and, only for markers the agent prints itself, a screen
+   reader. An agent whose screen proves nothing gets none.
+3. Add an install target, a row in the README's agent table, and fixtures.
+
+Codex, Gemini CLI and opencode were added from their documentation and
+source before recordings existed. Recordings that confirm or correct them
+are the most useful contribution right now.
+
 ## Build and test
 
 ```sh
 make build   # bin/deck
-make test    # unit, fixture replay, integration (needs tmux 3.3+)
+make test    # unit, fixture replay, integration (needs tmux 3.2+)
 make perf    # the 120-pane performance test and the benchmark, run alone
 make lint    # golangci-lint v2
 ```
@@ -27,7 +67,8 @@ make lint    # golangci-lint v2
 
 Hook sequences under `test/fixtures/` come from real sessions:
 
-1. `deck install --claude --record --apply`, then use Claude for a while.
+1. `deck install --claude --record --apply`, then use Claude for a while
+   (`--codex` and `--gemini` record the same way).
    Traces land in `~/.local/state/tmux-agent-deck/record/`. The recorder keeps
    event names and metadata only, never prompts, paths or titles.
 2. Cut a scenario out of a trace:

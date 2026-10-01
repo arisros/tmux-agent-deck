@@ -121,8 +121,18 @@ func (h *harness) deck(stdin string, args ...string) string {
 // hook runs `deck hook` the way Claude does: payload on stdin, TMUX_PANE set.
 func (h *harness) hook(pane, event, extra string) time.Duration {
 	h.t.Helper()
+	return h.hookAs("", pane, event, extra)
+}
+
+// hookAs is hook for another agent: its hook command carries --agent.
+func (h *harness) hookAs(agent, pane, event, extra string) time.Duration {
+	h.t.Helper()
 	payload := fmt.Sprintf(`{"hook_event_name":%q,"session_id":"sess-%s"%s}`, event, strings.TrimPrefix(pane, "%"), extra)
-	cmd := exec.Command(h.bin, "hook")
+	args := []string{"hook"}
+	if agent != "" {
+		args = append(args, "--agent", agent)
+	}
+	cmd := exec.Command(h.bin, args...)
 	cmd.Env = h.env(pane)
 	cmd.Stdin = strings.NewReader(payload)
 	start := time.Now()

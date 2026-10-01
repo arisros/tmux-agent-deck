@@ -19,6 +19,7 @@ jobs:
       fail-fast: false
       matrix:
         # macOS is where most users run this; ubuntu-latest ships tmux 3.4.
+        # The floor job below covers 3.2a and 3.3a.
         os: [ubuntu-latest, macos-latest]
         go: ['1.26', 'stable']
     steps:
@@ -38,6 +39,40 @@ jobs:
         env:
           DECK_LEAK_WORDS: ${{ secrets.DECK_LEAK_WORDS }}
       - run: make build && ./bin/deck --version
+
+  floor:
+    # The oldest tmux the plugin supports, and the first one with a styled
+    # popup. Distribution images pin both: nothing else ships them any more.
+    name: tmux ${{ matrix.tmux }} (${{ matrix.image }})
+    runs-on: ubuntu-latest
+    container: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: ubuntu:22.04
+            tmux: 3.2a
+          - image: debian:bookworm
+            tmux: 3.3a
+    env:
+      # Without a UTF-8 locale tmux prints every glyph as "_".
+      LC_ALL: C.UTF-8
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: install tmux and a toolchain
+        run: |
+          apt-get update
+          apt-get install -y tmux git ca-certificates curl gcc libc6-dev bsdutils
+          test "$(tmux -V)" = "tmux ${{ matrix.tmux }}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: go test ./...
+        env:
+          GOFLAGS: -buildvcs=false
 
   perf:
     name: performance at scale (120 panes)

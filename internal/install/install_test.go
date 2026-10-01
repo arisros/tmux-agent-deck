@@ -164,6 +164,28 @@ func TestStatusLineTakesOnlyAFreeSlot(t *testing.T) {
 	}
 }
 
+func TestWrapKeepsTheUsersStatusLineAndRestoresIt(t *testing.T) {
+	mine := "{\n  \"statusLine\": {\n    \"type\": \"command\",\n    \"command\": \"~/bin/my-line --color 'a b' \\\"$HOME\\\"\",\n    \"padding\": 2\n  }\n}\n"
+	wrap := func(b64 string) string { return "/p/deck statusline " + WrapFlag + " " + b64 + " # " + Marker }
+	out, ok, err := WrapStatusLine([]byte(mine), wrap)
+	if err != nil || !ok {
+		t.Fatalf("not wrapped: %v %v", ok, err)
+	}
+	if !strings.Contains(string(out), WrapFlag) || !strings.Contains(string(out), `"padding": 2`) || strings.Contains(string(out), "my-line") {
+		t.Errorf("wrapped file:\n%s", out)
+	}
+	if again, ok, _ := WrapStatusLine(out, wrap); ok || string(again) != string(out) {
+		t.Error("wrapping twice changed the file")
+	}
+	back, err := RemoveStatusLine(out)
+	if err != nil || string(back) != mine {
+		t.Errorf("uninstall did not restore the user's line:\n%s", back)
+	}
+	if _, ok, _ := WrapStatusLine([]byte(`{"model":"opus"}`), wrap); ok {
+		t.Error("wrapped a status line that does not exist")
+	}
+}
+
 func TestRemoveLeavesNoEmptyHooks(t *testing.T) {
 	added, err := Add([]byte(`{"model":"opus"}`), []string{"Stop"}, deck)
 	if err != nil {
