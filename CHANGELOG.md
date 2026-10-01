@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/arisros/tmux-agent-deck/compare/v0.1.1...v0.1.2) (2026-10-01)
+
+
+### Fixed
+
+* **sidebar:** restore window layouts when the sidebar follows ([#6](https://github.com/arisros/tmux-agent-deck/issues/6)) ([eedc014](https://github.com/arisros/tmux-agent-deck/commit/eedc014aa49a70760eb968e1baf2024bccf26467))
+
 ## [0.1.1](https://github.com/arisros/tmux-agent-deck/compare/v0.1.0...v0.1.1) (2026-09-30)
 
 
