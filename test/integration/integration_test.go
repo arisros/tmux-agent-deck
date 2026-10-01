@@ -39,7 +39,10 @@ func TestLifecycleAndFormats(t *testing.T) {
 		}
 	}
 	if icon := h.opt(a, "E:@deck_window_icon"); !strings.Contains(icon, "✔") {
-		t.Errorf("window icon %q lacks ✔", icon)
+		// Everything the icon is computed from, and what moved the state.
+		t.Errorf("window icon %q lacks ✔\npanes: %s\nicon again: %q\nevents:\n%s", icon,
+			h.opt(a, "P:[#{pane_id} cmd=#{pane_current_command} remembered=#{@deck_cmd} alive=#{E:@deck_alive} state=#{@deck_state}] "),
+			h.opt(a, "E:@deck_window_icon"), h.deck("", "events"))
 	}
 
 	// Selecting the pane runs the tmux hook, which runs `deck focus`.
@@ -147,6 +150,21 @@ func TestDeadAgentHidden(t *testing.T) {
 
 // An agent started through a wrapper has a process name the deck cannot
 // know. It is tracked by the command its pane ran when its hooks fired.
+// A pane the deck never heard from has no remembered command; that must not
+// read as "unchanged" just because both sides are empty.
+func TestPaneWithoutARememberedCommandIsNotAlive(t *testing.T) {
+	h := newHarness(t)
+	a := h.tmux("split-window", "-d", "-t", "alpha", "-P", "-F", "#{pane_id}", "sleep 100000")
+	h.eventually(func() bool { return h.opt(a, "pane_current_command") == "sleep" }, "plain pane running")
+	if got := h.opt(a, "E:@deck_alive"); got != "0" {
+		t.Errorf("alive = %q for a pane with no agent", got)
+	}
+	h.tmux("set-option", "-p", "-t", a, "@deck_cmd", "sleep")
+	if got := h.opt(a, "E:@deck_alive"); got != "1" {
+		t.Errorf("alive = %q once the command is remembered", got)
+	}
+}
+
 func TestAgentBehindAWrapperIsTracked(t *testing.T) {
 	h := newHarness(t)
 	a := h.tmux("split-window", "-d", "-t", "alpha", "-P", "-F", "#{pane_id}", "sleep 100000")

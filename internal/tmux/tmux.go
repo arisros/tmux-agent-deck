@@ -129,7 +129,7 @@ const (
 	// hook last fired there. An agent started through a wrapper shows as the
 	// wrapper ("node"), so no list of process names can tell. Claude Code is
 	// also matched by name, since it renames itself after it starts.
-	AliveFormat = `#{||:#{==:#{pane_current_command},#{@deck_cmd}},` + IsClaudeFormat + `}`
+	AliveFormat = `#{||:#{&&:#{@deck_cmd},#{==:#{pane_current_command},#{@deck_cmd}}},` + IsClaudeFormat + `}`
 )
 
 // Pane is one row of list-panes.
