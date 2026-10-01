@@ -8,9 +8,11 @@ package install
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -289,7 +291,54 @@ func SetStatusLine(settings []byte, command string) ([]byte, bool, error) {
 	return out, true, err
 }
 
-// RemoveStatusLine drops the statusLine if the deck owns it.
+// WrapFlag marks a status line command that wraps the user's own. The
+// original command follows it, base64 encoded, so uninstall can put it back
+// byte for byte without parsing shell quoting.
+const WrapFlag = "--wrap64"
+
+var wrapped = regexp.MustCompile(WrapFlag + ` ([A-Za-z0-9+/=]+)`)
+
+// WrapStatusLine replaces the user's own statusLine command with wrap(its
+// base64), leaving every other field of the statusLine alone. It reports
+// false, and changes nothing, when there is no foreign command to wrap.
+func WrapStatusLine(settings []byte, wrap func(original64 string) string) ([]byte, bool, error) {
+	root, err := parseObject(settings)
+	if err != nil {
+		return nil, false, err
+	}
+	raw, ok := root.get("statusLine")
+	if !ok || bytes.Contains(raw, []byte(Marker)) {
+		return settings, false, nil
+	}
+	sl, err := parseObject(raw)
+	if err != nil {
+		return nil, false, fmt.Errorf("statusLine: %w", err)
+	}
+	var original string
+	if c, ok := sl.get("command"); !ok || json.Unmarshal(c, &original) != nil || original == "" {
+		return settings, false, nil
+	}
+	command := wrap(base64.StdEncoding.EncodeToString([]byte(original)))
+	if !strings.Contains(command, Marker) || !strings.Contains(command, WrapFlag) {
+		return nil, false, fmt.Errorf("wrapping command %q lacks the marker or %s", command, WrapFlag)
+	}
+	root = root.set("statusLine", sl.set("command", mustJSON(command)).raw())
+	out, err := format(root.raw())
+	return out, true, err
+}
+
+// Unwrap returns the command a wrapping status line command carries.
+func Unwrap(command string) (string, bool) {
+	m := wrapped.FindStringSubmatch(command)
+	if m == nil {
+		return "", false
+	}
+	b, err := base64.StdEncoding.DecodeString(m[1])
+	return string(b), err == nil
+}
+
+// RemoveStatusLine drops the statusLine if the deck owns it, and puts the
+// user's own command back if the deck wraps it.
 func RemoveStatusLine(settings []byte) ([]byte, error) {
 	if len(bytes.TrimSpace(settings)) == 0 {
 		settings = []byte("{}")
@@ -297,6 +346,17 @@ func RemoveStatusLine(settings []byte) ([]byte, error) {
 	root, err := parseObject(settings)
 	if err != nil {
 		return nil, err
+	}
+	if raw, ok := root.get("statusLine"); ok && bytes.Contains(raw, []byte(WrapFlag)) {
+		if sl, err := parseObject(raw); err == nil {
+			var command string
+			if c, ok := sl.get("command"); ok && json.Unmarshal(c, &command) == nil {
+				if original, ok := Unwrap(command); ok {
+					root = root.set("statusLine", sl.set("command", mustJSON(original)).raw())
+					return format(root.raw())
+				}
+			}
+		}
 	}
 	if raw, ok := root.get("statusLine"); ok && bytes.Contains(raw, []byte(Marker)) {
 		kept := object{}

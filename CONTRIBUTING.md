@@ -18,7 +18,7 @@ issue first so we can agree on the shape.
 
 ```sh
 make build   # bin/deck
-make test    # unit, fixture replay, integration (needs tmux 3.3+)
+make test    # unit, fixture replay, integration (needs tmux 3.2+)
 make perf    # the 120-pane performance test and the benchmark, run alone
 make lint    # golangci-lint v2
 ```

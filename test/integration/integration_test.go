@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"encoding/base64"
 	"fmt"
 	"os"
 	"os/exec"
@@ -100,8 +101,11 @@ func TestNotifyCommand(t *testing.T) {
 	h.hook(a, "PermissionRequest", `,"tool_name":"Bash"`)
 	h.hook(a, "PostToolUse", "")
 	h.hook(a, "Stop", "")
-	want := "waiting " + a + " permission Bash\ndone " + a + "\n"
-	h.eventually(func() bool { b, _ := os.ReadFile(out); return string(b) == want }, "the notify command to run twice")
+	// Both run detached, so their order in the file is not fixed.
+	h.eventually(func() bool {
+		b, _ := os.ReadFile(out)
+		return strings.Contains(string(b), "waiting "+a+" permission Bash\n") && strings.Contains(string(b), "done "+a+"\n")
+	}, "the notify command to run for waiting and for done")
 }
 
 func TestWindowIconPrefersMostUrgent(t *testing.T) {
@@ -398,6 +402,19 @@ func TestStatusLineFeedsTheViews(t *testing.T) {
 			t.Errorf("popup lacks %q:\n%s", want, screen)
 		}
 	}
+	// Wrapping a status line of the user's own: theirs is printed, from the
+	// same input, and the numbers are still recorded.
+	mine := base64.StdEncoding.EncodeToString([]byte(`printf 'mine: '; grep -o '"used_percentage":77'`))
+	wrappedLine := h.deck(`{"session_id":"`+sid+`","context_window":{"used_percentage":77}}`, "statusline", "--wrap64", mine)
+	if strings.TrimSpace(wrappedLine) != `mine: "used_percentage":77` {
+		t.Errorf("wrapped status line = %q", wrappedLine)
+	}
+	if out := h.deck("", "list", "--json"); !strings.Contains(out, a) {
+		t.Errorf("agent missing after the wrapped line:\n%s", out)
+	}
+	if b, err := os.ReadFile(filepath.Join(filepath.Dir(h.state), "usage", sid+".json")); err != nil || !strings.Contains(string(b), `"context_used":77`) {
+		t.Errorf("wrapped line did not record usage: %v %s", err, b)
+	}
 	if out := h.deck("not json", "statusline"); strings.TrimSpace(out) != "" {
 		t.Errorf("garbage input printed %q", out)
 	}
@@ -536,7 +553,7 @@ func TestDoctorReportsAHealthySetup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("doctor failed: %v\n%s", err, out)
 	}
-	for _, want := range []string{"✔ tmux 3.3 or newer", "✔ focus-events on", "✔ Claude hooks", "✔ statusLine"} {
+	for _, want := range []string{"✔ tmux 3.2 or newer", "✔ focus-events on", "✔ Claude hooks", "✔ statusLine"} {
 		if !strings.Contains(string(out), want) {
 			t.Errorf("doctor output lacks %q:\n%s", want, out)
 		}

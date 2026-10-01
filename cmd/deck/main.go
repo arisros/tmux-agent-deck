@@ -35,8 +35,9 @@ views:
   events [--pane P] [-n N] [--json]    print the log of state changes, oldest first
 
 setup:
-  install --claude [--record] [--apply] [--settings FILE]
-                                       add the hooks and statusLine to Claude settings (preview by default)
+  install --claude [--record] [--wrap-statusline] [--apply] [--settings FILE]
+                                       add the hooks and statusLine to Claude settings (preview by default);
+                                       --wrap-statusline keeps a statusLine of your own and records usage through it
   uninstall --claude [--apply] [--settings FILE]
                                        remove every deck hook and the deck's statusLine
   doctor                               check the installation
@@ -68,8 +69,8 @@ var commands = map[string]func(args []string) error{
 	"uninstall": func(a []string) error { return runInstall(a, false) },
 	"doctor":    runDoctor,
 	"describe":  func([]string) error { return runDescribe() },
-	"statusline": func([]string) error {
-		runStatusLine(os.Stdin)
+	"statusline": func(a []string) error {
+		runStatusLine(a, os.Stdin)
 		return nil
 	},
 	"tick": func([]string) error {

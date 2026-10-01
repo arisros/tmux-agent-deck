@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"time"
 
 	"github.com/arisros/fate/render"
@@ -13,6 +15,7 @@ import (
 	"github.com/arisros/tmux-agent-deck/internal/deck"
 	"github.com/arisros/tmux-agent-deck/internal/events"
 	"github.com/arisros/tmux-agent-deck/internal/hook"
+	"github.com/arisros/tmux-agent-deck/internal/install"
 	"github.com/arisros/tmux-agent-deck/internal/machine"
 	"github.com/arisros/tmux-agent-deck/internal/record"
 	"github.com/arisros/tmux-agent-deck/internal/store"
@@ -97,13 +100,30 @@ func runDescribe() error {
 }
 
 // runStatusLine is Claude's statusLine command. Like a hook it must never get
-// in Claude's way: on any error it prints an empty line.
-func runStatusLine(stdin io.Reader) {
-	in, err := usage.Parse(stdin)
+// in Claude's way: on any error it prints an empty line. With --wrap64 it
+// records the numbers and then prints what the user's own command prints,
+// given the same input.
+func runStatusLine(args []string, stdin io.Reader) {
+	fs := flag.NewFlagSet("statusline", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	wrap64 := fs.String("wrap64", "", "base64 of the status line command to run after recording")
+	_ = fs.Parse(args)
+	raw, _ := io.ReadAll(stdin)
+	in, err := usage.Parse(bytes.NewReader(raw))
+	if err == nil {
+		_ = usage.Record(usage.DefaultDir(store.DefaultDir()), in, os.Getenv("TMUX_PANE"), time.Now())
+	}
+	if original, ok := install.Unwrap(install.WrapFlag + " " + *wrap64); ok && *wrap64 != "" {
+		cmd := exec.Command("sh", "-c", original)
+		cmd.Stdin, cmd.Stdout, cmd.Stderr = bytes.NewReader(raw), os.Stdout, os.Stderr
+		if cmd.Run() != nil {
+			fmt.Println()
+		}
+		return
+	}
 	if err != nil {
 		fmt.Println()
 		return
 	}
-	_ = usage.Record(usage.DefaultDir(store.DefaultDir()), in, os.Getenv("TMUX_PANE"), time.Now())
 	fmt.Println(usage.Line(in))
 }

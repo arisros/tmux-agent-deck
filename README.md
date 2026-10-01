@@ -6,7 +6,7 @@
   <a href="https://github.com/arisros/tmux-agent-deck/actions/workflows/ci.yml"><img src="https://github.com/arisros/tmux-agent-deck/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/arisros/tmux-agent-deck/releases"><img src="https://img.shields.io/github/v/release/arisros/tmux-agent-deck?sort=semver" alt="Release"></a>
   <a href="go.mod"><img src="https://img.shields.io/github/go-mod/go-version/arisros/tmux-agent-deck" alt="Go"></a>
-  <img src="https://img.shields.io/badge/tmux-3.3%2B-1bb91f" alt="tmux 3.3+">
+  <img src="https://img.shields.io/badge/tmux-3.2%2B-1bb91f" alt="tmux 3.2+">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT"></a>
 </p>
 
@@ -15,7 +15,7 @@
 
 ## Quickstart
 
-Needs tmux 3.3+ and Claude Code. Go 1.26+ is optional: without it, the plugin downloads a release binary and checks its checksum.
+Needs tmux 3.2+ and Claude Code (on 3.2 the popup has no border style or title). Go 1.26+ is optional: without it, the plugin downloads a release binary and checks its checksum.
 
 ```tmux
 # ~/.tmux.conf (or ~/.config/tmux/tmux.conf), then prefix I
@@ -141,7 +141,7 @@ The sidebar keeps its place as the full-height left column: it follows you to ot
 
 ## Usage and plan limits
 
-`deck install --claude` also sets Claude Code's `statusLine` to `deck statusline`, unless you have a status line of your own.
+`deck install --claude` also sets Claude Code's `statusLine` to `deck statusline`, unless you have a status line of your own. To keep yours and still feed the deck, add `--wrap-statusline`: Claude then runs the deck, which records the numbers and prints whatever your command prints. `deck uninstall` puts your command back exactly.
 
 ```mermaid
 flowchart LR

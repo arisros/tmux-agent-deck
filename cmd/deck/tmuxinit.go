@@ -120,9 +120,16 @@ func runTmuxInit(_ []string) error {
 		return errors.New("tmux-agent-deck must be installed under a path without spaces or quotes: " + bin)
 	}
 	c := tmux.FromEnv()
-	if v, err := c.Run("display-message", "-p", "#{version}"); err == nil && !tmuxAtLeast("tmux "+strings.TrimSpace(v), 3, 3) {
-		// display-popup -b and -T, which the popup binding uses, arrived in 3.3.
-		return fmt.Errorf("tmux-agent-deck needs tmux 3.3 or newer, this server is %s", strings.TrimSpace(v))
+	version, verr := c.Run("display-message", "-p", "#{version}")
+	version = "tmux " + strings.TrimSpace(version)
+	if verr == nil && !tmuxAtLeast(version, 3, 2) {
+		// display-popup and run-shell -C, which the sidebar follow uses, arrived in 3.2.
+		return fmt.Errorf("tmux-agent-deck needs tmux 3.2 or newer, this server is %s", version)
+	}
+	popup := []string{"display-popup", "-E", "-w", "90%", "-h", "70%"}
+	if verr != nil || tmuxAtLeast(version, 3, 3) {
+		// The border style and the title arrived in 3.3; 3.2 gets a plain popup.
+		popup = append(popup, "-b", "rounded", "-T", " agents ")
 	}
 
 	var cmds [][]string
@@ -164,8 +171,7 @@ func runTmuxInit(_ []string) error {
 		[]string{"set-option", "-gu", "@deck_is_claude"},
 		[]string{"set-option", "-g", "@deck_pane_icon", paneIconFormat(running)},
 		[]string{"set-option", "-g", "@deck_window_icon", windowIconFormat(running)},
-		[]string{"bind-key", values["@deck-popup-key"], "display-popup", "-E", "-w", "90%", "-h", "70%", "-b", "rounded",
-			"-T", " agents ", bin + " popup"},
+		append(append([]string{"bind-key", values["@deck-popup-key"]}, popup...), bin+" popup"),
 		[]string{"bind-key", values["@deck-sidebar-key"], "run-shell", "-b",
 			bin + " sidebar toggle --session #{q:session_id} --window #{q:window_id}"},
 	)

@@ -24,6 +24,7 @@ func runInstall(args []string, add bool) error {
 	claude := fs.Bool("claude", false, "target Claude Code")
 	rec := fs.Bool("record", false, "install the recorder hooks")
 	apply := fs.Bool("apply", false, "write the change (default: preview only)")
+	wrap := fs.Bool("wrap-statusline", false, "keep your own statusLine and record usage through it")
 	path := fs.String("settings", defaultSettingsPath(), "Claude settings file")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -57,8 +58,14 @@ func runInstall(args []string, add bool) error {
 			if after, owned, err = install.SetStatusLine(after, guarded(bin, "statusline")); err != nil {
 				return err
 			}
-			if !owned {
+			if !owned && *wrap {
+				if after, owned, err = install.WrapStatusLine(after, func(b64 string) string { return wrapping(bin, b64) }); err != nil {
+					return err
+				}
+			}
+			if !owned && !strings.Contains(string(after), install.WrapFlag) {
 				fmt.Println("Note: you have your own statusLine, so the deck will not show token usage or plan limits.")
+				fmt.Println("      Add --wrap-statusline to keep yours and record them through it.")
 			}
 		}
 	} else {
@@ -115,6 +122,15 @@ var liveEvents = []string{
 func guarded(bin, args string) string {
 	q := shellQuote(bin)
 	return "test -x " + q + " && " + q + " " + args + "; exit 0 # " + install.Marker
+}
+
+// wrapping is the statusLine command that runs the user's own line through
+// the deck. Without the binary it runs their line directly, so removing the
+// plugin never blanks a status line.
+func wrapping(bin, original64 string) string {
+	q := shellQuote(bin)
+	return "if test -x " + q + "; then " + q + " statusline " + install.WrapFlag + " " + original64 +
+		`; else sh -c "$(echo ` + original64 + ` | base64 -d)"; fi # ` + install.Marker
 }
 
 func defaultSettingsPath() string {
