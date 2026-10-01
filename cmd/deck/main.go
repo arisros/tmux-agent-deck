@@ -64,6 +64,7 @@ setup:
 called by the agents and tmux, not by hand:
   hook [--agent NAME] [--record]       apply a hook event read from stdin
   statusline                           record usage and plan limits, print Claude's status line
+  usage                                record the usage another agent reports about a session, read from stdin
   focus <pane>                         the user looked at pane: a done agent becomes idle
   reconcile <pane>                     correct a running or waiting agent from its screen
   sidebar run --session S              the sidebar process itself
@@ -74,6 +75,7 @@ called by the agents and tmux, not by hand:
 // commands is the dispatch table; the usage text is tested against it.
 var commands = map[string]func(args []string) error{
 	"hook":      func(a []string) error { return runHook(a, os.Stdin) },
+	"usage":     func([]string) error { return runUsage(os.Stdin) },
 	"focus":     runFocus,
 	"reconcile": runReconcile,
 	"popup":     runPopup,

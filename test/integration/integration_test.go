@@ -861,12 +861,37 @@ await ev("session.idle", { sessionID: "ses_child" })
 	if got, why := state(), h.opt(a, "@deck_reason"); got != "waiting" || why != "question" {
 		t.Fatalf("after question.asked: %q %q", got, why)
 	}
+	// Two assistant messages, the second updated while it streamed, and a
+	// child session's message that must not be billed to this agent.
 	run(`await ev("question.replied", { sessionID: main })
 await hooks["tool.execute.after"]({ tool: "bash", sessionID: main })
+const msg = (id, sessionID, cost, input, output) => ev("message.updated", { info: {
+  id, sessionID, role: "assistant", modelID: "big-model", cost,
+  tokens: { input, output, reasoning: 10, cache: { read: 100, write: 0 } } } })
+await ev("session.created", { sessionID: "ses_child", info: { id: "ses_child", parentID: main } })
+await msg("m1", main, 0.25, 1000, 200)
+await msg("m2", main, 0.01, 5, 1)
+await msg("m2", main, 0.5, 2000, 300)
+await msg("m9", "ses_child", 9, 9000, 9000)
+await ev("message.updated", { info: { id: "u1", sessionID: main, role: "user" } })
 await ev("session.idle", { sessionID: main })
 `)
 	if got := state(); got != "done" {
 		t.Fatalf("after session.idle: %q, want done", got)
+	}
+	var listed []struct {
+		Usage struct {
+			Model        string  `json:"model"`
+			CostUSD      float64 `json:"cost_usd"`
+			InputTokens  int64   `json:"input_tokens"`
+			OutputTokens int64   `json:"output_tokens"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal([]byte(h.deck("", "list", "--json", "--filter", "pane:"+a)), &listed); err != nil || len(listed) != 1 {
+		t.Fatalf("list: %v %v", err, listed)
+	}
+	if u := listed[0].Usage; u.Model != "big-model" || u.CostUSD != 0.75 || u.InputTokens != 3200 || u.OutputTokens != 520 {
+		t.Errorf("usage = %+v, want big-model, $0.75, 3200 in, 520 out", u)
 	}
 	run(`await hooks["chat.message"]({ sessionID: main })
 await ev("session.error", { sessionID: main, error: { name: "MessageAbortedError" } })

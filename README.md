@@ -171,7 +171,7 @@ The sidebar keeps its place as the full-height left column: it follows you to ot
 | Claude Code | `deck install --claude --apply` | everything but Esc and a denied permission | those two endings, and dialogs | yes, from its statusLine |
 | Codex CLI 0.124+ | `deck install --codex --apply`, then `/hooks` in Codex to trust them | prompts, tools, permission requests, the end of a turn; a closed session from 0.145, Esc from 0.150 | dialogs and work in progress | no: Codex only writes them to its transcript, which the deck does not read |
 | Gemini CLI | `deck install --gemini --apply`, then restart it | prompts, tools, permission prompts, the end of a turn | nothing | no |
-| opencode | `deck install --opencode --apply`, then restart it | prompts, tools, permission requests and their answers, questions, an aborted turn, the end of a turn | nothing | no |
+| opencode | `deck install --opencode --apply`, then restart it | prompts, tools, permission requests and their answers, questions, an aborted turn, the end of a turn | nothing | tokens and cost, counted from when opencode started; no context or plan bars |
 
 Only Claude Code's transitions are replayed from recorded sessions. The other three are built from each project's published hook or plugin interface and tested against that, so treat them as experimental until recordings exist:
 

@@ -36,6 +36,7 @@ What the deck set out to do, what is done, and what it will not become. The orde
 | 8 | Gemini CLI and opencode | Gemini through its hooks, opencode through a plugin file run under test with node |
 | 9 | Scripting | `deck events --follow` and `deck wait`, both asleep in `tmux wait-for` between events |
 | 10 | Positioning | the tagline, the compatibility table and the agent guide in [CONTRIBUTING.md](../CONTRIBUTING.md) |
+| 11 | Follow-ups | the selected agent's timeline and session age in the popup; copy and rename; `@deck-popup-attention`; `started_at`; tokens and cost for opencode through `deck usage`, which any agent can call |
 
 ## Left to do
 
@@ -45,8 +46,8 @@ What the deck set out to do, what is done, and what it will not become. The orde
 | What a denied approval looks like in Codex | no hook was found for it, and its screen has no end marker the deck has seen, so the agent may show as running until the next prompt |
 | Whether Gemini CLI's hooks see `TMUX_PANE` | its environment redaction may hide it; without it the deck cannot tell which pane the agent is in |
 | Claude Code fixtures for resume, compaction, a crash, a failed tool, an elicitation | they need real sessions to record |
+| `sort:` terms in the filter | the order is fixed: urgency, then longest wait |
 | Sending a prompt into a live agent | tested against a stand-in that echoes its input; the paste followed by Enter has not been watched in each real agent |
-| The event timeline of an agent inside the popup | the log exists and `deck events --pane` prints it; the popup shows the screen only |
 
 ## What each agent reports
 
@@ -62,7 +63,7 @@ Read from each project's source and documentation on 2026-10-02.
 | Interrupt | no event, read from the screen | `Interrupt`, from 0.150 | unknown | `session.error`, then `session.idle` |
 | Background work at the end of a turn | reported by `Stop` | the screen says `background terminal running` | unknown | not found |
 | Process name tmux sees | its version number, or `claude` | `node` when installed from npm | not observed | `opencode`, or `node` from npm |
-| Usage for another program | statusLine JSON | none outside its transcript file | not checked | tokens and cost per message, not used yet |
+| Usage for another program | statusLine JSON | none outside its transcript file | not checked | tokens and cost per message, summed by the plugin and sent through `deck usage` |
 
 ## tmux versions
 

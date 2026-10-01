@@ -138,6 +138,25 @@ func Record(dir string, in Input, pane string, now time.Time) error {
 	return nil
 }
 
+// Report is what an agent other than Claude Code tells the deck about a
+// session's usage: the same numbers, without Claude's statusLine around them.
+type Report struct {
+	SessionID string `json:"session_id"`
+	Session
+}
+
+// RecordReport saves a report from the agent running in pane.
+func RecordReport(dir string, r Report, pane string, now time.Time) error {
+	if !validID.MatchString(r.SessionID) {
+		return fmt.Errorf("invalid session id %q", r.SessionID)
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	r.Pane, r.UpdatedAtUnix = pane, now.Unix()
+	return writeJSON(filepath.Join(dir, r.SessionID+".json"), r.Session)
+}
+
 // Load reads every session's usage and the latest limits.
 func Load(dir string) (map[string]Session, *Limits) {
 	sessions := map[string]Session{}

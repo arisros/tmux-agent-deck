@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -62,6 +63,21 @@ func runHook(args []string, stdin io.Reader) error {
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "deck hook:", err)
+	}
+	return nil
+}
+
+// runUsage records the usage an agent reports about itself: one JSON object
+// on stdin with session_id, model, cost_usd, input_tokens, output_tokens and
+// context_used. Like a hook, it never fails the agent that called it.
+func runUsage(stdin io.Reader) error {
+	var r usage.Report
+	err := json.NewDecoder(stdin).Decode(&r)
+	if err == nil {
+		err = usage.RecordReport(usage.DefaultDir(store.DefaultDir()), r, os.Getenv("TMUX_PANE"), time.Now())
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "deck usage:", err)
 	}
 	return nil
 }

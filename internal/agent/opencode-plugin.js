@@ -13,23 +13,58 @@ const children = new Set()
 // state machine needs them in order, and opencode never waits for it.
 let queue = Promise.resolve()
 
-function report(event, sessionID, extra) {
-  if (!sessionID || children.has(sessionID)) return
-  const payload = JSON.stringify({ hook_event_name: event, session_id: sessionID, ...extra })
+function run(args, payload) {
   queue = queue.then(
     () =>
       new Promise((done) => {
         try {
-          const p = spawn(DECK, ["hook", "--agent", "opencode"], { stdio: ["pipe", "ignore", "ignore"] })
+          const p = spawn(DECK, args, { stdio: ["pipe", "ignore", "ignore"] })
           p.on("error", done)
           p.on("close", done)
           p.stdin.on("error", () => {})
-          p.stdin.end(payload)
+          p.stdin.end(JSON.stringify(payload))
         } catch {
           done()
         }
       }),
   )
+}
+
+function report(event, sessionID, extra) {
+  if (!sessionID || children.has(sessionID)) return
+  run(["hook", "--agent", "opencode"], { hook_event_name: event, session_id: sessionID, ...extra })
+}
+
+// What each assistant message cost, by session and message. opencode updates
+// a message many times while it streams, so the latest figures replace the
+// earlier ones. Only messages seen since opencode started are counted.
+const spent = new Map()
+
+function note(info) {
+  if (info?.role !== "assistant" || !info.sessionID || !info.id || children.has(info.sessionID)) return
+  if (!spent.has(info.sessionID)) spent.set(info.sessionID, new Map())
+  const t = info.tokens ?? {}
+  spent.get(info.sessionID).set(info.id, {
+    cost: Number(info.cost) || 0,
+    input: (Number(t.input) || 0) + (Number(t.cache?.read) || 0) + (Number(t.cache?.write) || 0),
+    output: (Number(t.output) || 0) + (Number(t.reasoning) || 0),
+    model: String(info.modelID ?? ""),
+  })
+}
+
+// Usage is reported once per turn, just before the turn's end, so the view
+// that redraws on that end already has the numbers.
+function usage(sessionID) {
+  const messages = spent.get(sessionID)
+  if (!messages || children.has(sessionID)) return
+  const total = { session_id: sessionID, model: "", cost_usd: 0, input_tokens: 0, output_tokens: 0 }
+  for (const m of messages.values()) {
+    total.cost_usd += m.cost
+    total.input_tokens += m.input
+    total.output_tokens += m.output
+    if (m.model) total.model = m.model
+  }
+  run(["usage"], total)
 }
 
 export const TmuxAgentDeck = async () => ({
@@ -42,9 +77,14 @@ export const TmuxAgentDeck = async () => ({
         else report("SessionStart", id, { source: "startup" })
         break
       case "session.deleted":
+        spent.delete(id)
         if (!children.delete(id)) report("SessionEnd", id)
         break
+      case "message.updated":
+        note(p.info)
+        break
       case "session.idle":
+        usage(id)
         report("Stop", id)
         break
       case "session.error":
