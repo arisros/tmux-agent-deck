@@ -153,7 +153,24 @@ func (h *harness) eventually(ok func() bool, what string) {
 			return
 		}
 	}
-	h.t.Fatalf("timed out waiting for %s", what)
+	h.t.Fatalf("timed out waiting for %s\n%s", what, h.diagnostics())
+}
+
+// diagnostics is what a timeout needs to be understood after the fact on a
+// CI runner: the deck's own log of pins and repairs, and where panes are.
+func (h *harness) diagnostics() string {
+	var b strings.Builder
+	if log, err := os.ReadFile(filepath.Join(filepath.Dir(h.state), "views.log")); err == nil {
+		lines := strings.Split(strings.TrimSpace(string(log)), "\n")
+		if len(lines) > 20 {
+			lines = lines[len(lines)-20:]
+		}
+		b.WriteString("views.log:\n  " + strings.Join(lines, "\n  ") + "\n")
+	}
+	out, _ := exec.Command("tmux", "-L", h.socket, "list-panes", "-a", "-F",
+		"#{window_id} #{pane_id} #{pane_left},#{pane_top} #{pane_width}x#{pane_height} at_left=#{pane_at_left} at_bottom=#{pane_at_bottom} #{pane_current_command}").CombinedOutput()
+	b.WriteString("panes:\n  " + strings.ReplaceAll(strings.TrimSpace(string(out)), "\n", "\n  "))
+	return b.String()
 }
 
 // pins counts how often a sidebar pinned itself, from the deck's log.

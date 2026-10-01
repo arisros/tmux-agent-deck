@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -206,15 +207,22 @@ func TestSidebarFollowKeepsPaneWidths(t *testing.T) {
 	want2 := widths(w2)
 	follow(w1)
 	want1 := widths(w1)
+	// The sidebar's own resize handler can still move panes for a moment
+	// after the follow lands, so wait for the layout to settle: real drift
+	// never settles back to the widths it had.
+	settled := func(w, want string) {
+		t.Helper()
+		got := ""
+		h.eventually(func() bool { got = widths(w); return got == want }, w+" widths to settle")
+		if got != want {
+			t.Fatalf("%s widths drifted:\n got %q\nwant %q", w, got, want)
+		}
+	}
 	for range 4 {
 		follow(w2)
-		if got := widths(w2); got != want2 {
-			t.Fatalf("%s widths drifted:\n got %q\nwant %q", w2, got, want2)
-		}
+		settled(w2, want2)
 		follow(w1)
-		if got := widths(w1); got != want1 {
-			t.Fatalf("%s widths drifted:\n got %q\nwant %q", w1, got, want1)
-		}
+		settled(w1, want1)
 	}
 }
 
@@ -473,4 +481,25 @@ func TestFocusOutRepairsThroughTheHook(t *testing.T) {
 	h.tmux("select-pane", "-t", a)
 	h.tmux("select-pane", "-t", first) // a loses focus
 	h.eventually(func() bool { return h.opt(a, "@deck_state") == "idle" }, "the focus-out hook to repair the silent ending")
+}
+
+// Two layout changes within the pin interval: the second pin is deferred,
+// not dropped, so the sidebar still ends up as the left column.
+func TestPinTooSoonIsDeferredNotDropped(t *testing.T) {
+	h := newHarness(t)
+	sess, w1 := h.opt("alpha", "session_id"), h.opt("alpha", "window_id")
+	h.tmux("split-window", "-d", "-t", w1, "sleep 100000")
+	h.deck("", "sidebar", "toggle", "--session", sess, "--window", w1)
+	sb := h.tmux("show-options", "-qv", "-t", "alpha", "@deck_sidebar_pane")
+	pinned := func() bool {
+		return h.opt(sb, "pane_at_left") == "1" && h.opt(sb, "pane_at_top") == "1" && h.opt(sb, "pane_at_bottom") == "1"
+	}
+	h.eventually(pinned, "sidebar pinned at start")
+	// A pin just happened, as far as the rate limit knows.
+	h.tmux("set-option", "-p", "-t", sb, "@deck_pinned_at", fmt.Sprint(time.Now().UnixMilli()))
+	h.tmux("select-layout", "-t", w1, "even-vertical")
+	if pinned() {
+		t.Fatal("even-vertical left the sidebar in place; the test proves nothing")
+	}
+	h.eventually(pinned, "the deferred pin to put the sidebar back")
 }
