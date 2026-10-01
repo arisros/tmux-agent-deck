@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/arisros/tmux-agent-deck/internal/agent"
 	"github.com/arisros/tmux-agent-deck/internal/events"
 	"github.com/arisros/tmux-agent-deck/internal/hook"
 	"github.com/arisros/tmux-agent-deck/internal/machine"
@@ -326,7 +327,7 @@ func TestClassify(t *testing.T) {
 		"$ ls\nfoo\n":         "",
 	}
 	for screen, want := range cases {
-		if got := Classify(screen); got != want {
+		if got := agent.Claude.Classify(screen); got != want {
 			t.Errorf("Classify(%q) = %q, want %q", screen, got, want)
 		}
 	}
@@ -434,6 +435,82 @@ func TestSweepForgetsExitedAgents(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(d.Dir, "s2.json")); err != nil {
 		t.Errorf("the live agent's record is gone: %v", err)
+	}
+}
+
+func codexEvent(name, extra string) string {
+	return fmt.Sprintf(`{"hook_event_name":%q,"session_id":"c1"%s}`, name, extra)
+}
+
+func sendAs(t *testing.T, d *Deck, name, pane, payload string) {
+	t.Helper()
+	p, err := hook.Decode(strings.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Agent = name
+	if err := d.Hook(p, pane); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A Codex turn through the adapter: its payloads name no agent, the hook
+// command does, and from then on the record does.
+func TestCodexTurn(t *testing.T) {
+	f := newFake()
+	d := newDeck(t, f)
+	var trace []string
+	d.Emit = func(e events.Event) { trace = append(trace, e.Kind+" "+e.From+">"+e.To) }
+	steps := []struct{ event, extra, state string }{
+		{"SessionStart", `,"source":"startup"`, machine.Idle},
+		{"UserPromptSubmit", "", machine.Running},
+		{"PreToolUse", `,"tool_name":"Bash"`, machine.Running},
+		{"PermissionRequest", `,"tool_name":"Bash"`, machine.Waiting},
+		{"PostToolUse", `,"tool_name":"Bash"`, machine.Running},
+		{"Stop", "", machine.Done},
+		{"UserPromptSubmit", "", machine.Running},
+		{"Interrupt", "", machine.Idle},
+	}
+	for _, s := range steps {
+		sendAs(t, d, "codex", "%9", codexEvent(s.event, s.extra))
+		if got := f.state("%9"); got != s.state {
+			t.Fatalf("after %s: %q, want %q", s.event, got, s.state)
+		}
+	}
+	if got := f.opts["%9/@deck_agent"]; got != "codex" {
+		t.Errorf("@deck_agent = %q", got)
+	}
+	want := "Begin idle>idle,Prompt idle>running,Permission running>waiting,ToolEnd waiting>running,Stop running>done,Prompt done>running,Interrupt running>idle"
+	if got := strings.Join(trace, ","); got != want {
+		t.Errorf("trace:\n%s\nwant:\n%s", got, want)
+	}
+
+	// A screen check reads the session's own agent: Claude's markers on a
+	// Codex pane prove nothing, Codex's dialog does.
+	sendAs(t, d, "codex", "%9", codexEvent("UserPromptSubmit", ""))
+	f.screen = screenIdle
+	if err := d.Reconcile("%9", "c1", machine.Running); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.state("%9"); got != machine.Running {
+		t.Errorf("Claude's idle screen moved a Codex agent to %q", got)
+	}
+	f.screen = "Would you like to run the following command?\n› 1. Yes, proceed (y)\n"
+	if err := d.Reconcile("%9", "c1", machine.Running); err != nil {
+		t.Fatal(err)
+	}
+	if got, why := f.state("%9"), f.opts["%9/@deck_reason"]; got != machine.Waiting || why != "dialog" {
+		t.Errorf("Codex dialog on screen: %q %q, want waiting dialog", got, why)
+	}
+
+	sendAs(t, d, "codex", "%9", codexEvent("SessionEnd", ""))
+	if got := f.state("%9"); got != "" {
+		t.Errorf("state after SessionEnd = %q", got)
+	}
+	p, _ := hook.Decode(strings.NewReader(codexEvent("Stop", "")))
+	p.Agent = "nope"
+	if err := d.Hook(p, "%9"); err == nil {
+		t.Error("an unknown agent was accepted")
 	}
 }
 

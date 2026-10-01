@@ -21,17 +21,33 @@ func runInstall(args []string, add bool) error {
 		name = "install"
 	}
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
-	claude := fs.Bool("claude", false, "target Claude Code")
+	chosen := map[string]*bool{}
+	for _, t := range targets {
+		chosen[t.name] = fs.Bool(t.name, false, "target "+t.title)
+	}
 	rec := fs.Bool("record", false, "install the recorder hooks")
 	apply := fs.Bool("apply", false, "write the change (default: preview only)")
-	wrap := fs.Bool("wrap-statusline", false, "keep your own statusLine and record usage through it")
-	path := fs.String("settings", defaultSettingsPath(), "Claude settings file")
+	wrap := fs.Bool("wrap-statusline", false, "keep your own statusLine and record usage through it (Claude Code)")
+	path := fs.String("settings", "", "the agent's settings or hooks file (default: its usual place)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if !*claude {
-		return errors.New("--claude is required")
+	var t *target
+	for i := range targets {
+		if *chosen[targets[i].name] {
+			if t != nil {
+				return errors.New("name one agent at a time")
+			}
+			t = &targets[i]
+		}
 	}
+	if t == nil {
+		return errors.New("name the agent: --claude or --codex")
+	}
+	if *path == "" {
+		*path = t.path()
+	}
+	claude := t.name == "claude"
 
 	before, err := os.ReadFile(*path)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -43,17 +59,21 @@ func runInstall(args []string, add bool) error {
 		if err != nil {
 			return err
 		}
-		h, events := install.Hook{Command: guarded(bin, "hook"), Timeout: 5}, liveEvents
+		live, recorded, note := t.events()
+		if note != "" {
+			fmt.Println("Note:", note)
+		}
+		h, events := install.Hook{Command: guarded(bin, "hook"+t.hookArgs), Timeout: 5}, live
 		if *rec {
-			fmt.Println("Note: the recorder replaces the live hooks; run install --claude again to return to them.")
+			fmt.Printf("Note: the recorder replaces the live hooks; run install --%s again to return to them.\n", t.name)
 			// Recording never feeds state, so it may run async and out of order.
-			h, events = install.Hook{Command: guarded(bin, "hook --record"), Async: true, Timeout: 5}, recordEvents
+			h, events = install.Hook{Command: guarded(bin, "hook --record"), Async: t.async, Timeout: 5}, recorded
 		}
 		after, err = install.Add(before, events, h)
 		if err != nil {
 			return err
 		}
-		if !*rec {
+		if claude && !*rec {
 			var owned bool
 			if after, owned, err = install.SetStatusLine(after, guarded(bin, "statusline")); err != nil {
 				return err
@@ -72,8 +92,10 @@ func runInstall(args []string, add bool) error {
 		if after, err = install.Remove(before); err != nil {
 			return err
 		}
-		if after, err = install.RemoveStatusLine(after); err != nil {
-			return err
+		if claude {
+			if after, err = install.RemoveStatusLine(after); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -95,8 +117,66 @@ func runInstall(args []string, add bool) error {
 	if backup != "" {
 		fmt.Println("Backup:", backup)
 	}
-	fmt.Println("Running Claude sessions pick this up on their next settings reload; restart one if it does not.")
+	if add {
+		fmt.Println(t.afterApply)
+	}
 	return nil
+}
+
+// target is an agent whose hooks the deck can install.
+type target struct {
+	name, title string
+	path        func() string
+	// events returns the live and the recorder events, and a note to print.
+	events     func() (live, recorded []string, note string)
+	hookArgs   string
+	async      bool // whether the agent's hooks take "async"
+	afterApply string
+}
+
+var targets = []target{
+	{
+		name: "claude", title: "Claude Code", path: defaultSettingsPath, async: true,
+		events:     func() ([]string, []string, string) { return liveEvents, recordEvents, "" },
+		afterApply: "Running Claude sessions pick this up on their next settings reload; restart one if it does not.",
+	},
+	{
+		name: "codex", title: "Codex CLI", path: codexHooksPath, async: true, hookArgs: " --agent codex",
+		events:     codexEvents,
+		afterApply: "Codex runs a new hook only after you trust it: open Codex and run /hooks. A changed command needs trusting again.",
+	},
+}
+
+func codexHooksPath() string {
+	if dir := os.Getenv("CODEX_HOME"); dir != "" {
+		return filepath.Join(dir, "hooks.json")
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".codex", "hooks.json")
+}
+
+// codexEvents leaves out the events the installed Codex does not know: an
+// unknown event name could invalidate the hooks file. SessionEnd arrived in
+// 0.145 and Interrupt in 0.150.
+func codexEvents() (live, recorded []string, note string) {
+	live = []string{"SessionStart", "UserPromptSubmit", "PreToolUse", "PermissionRequest", "PostToolUse", "Stop"}
+	v := os.Getenv("DECK_CODEX_VERSION")
+	if v == "" {
+		out, _ := exec.Command("codex", "--version").Output()
+		v = string(out)
+	}
+	switch {
+	case tmuxAtLeast(v, 0, 150):
+		live = append(live, "SessionEnd", "Interrupt")
+	case tmuxAtLeast(v, 0, 145):
+		live = append(live, "SessionEnd")
+		note = "this Codex has no Interrupt hook (0.150 adds it): an interrupted turn shows as running until the next prompt"
+	case tmuxAtLeast(v, 0, 124):
+		note = "this Codex has no SessionEnd or Interrupt hook (0.145 and 0.150 add them): a closed session is forgotten when its pane changes, and an interrupted turn shows as running until the next prompt"
+	default:
+		note = "no Codex 0.124 or newer found on PATH; installing the events every such version knows. Run this again after upgrading Codex"
+	}
+	return live, live, note
 }
 
 // recordEvents are the hooks the recorder listens to. Every name here must be

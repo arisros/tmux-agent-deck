@@ -139,6 +139,17 @@ The screen is only trusted for Claude's explicit markers (its dialogs, the spinn
 
 The sidebar keeps its place as the full-height left column: it follows you to other windows, comes back after `swap-pane`, `rotate-window` or a layout change, restores its width when squeezed, and leaves a window once it is the only pane left.
 
+## Agents
+
+| Agent | Install | Reported by hooks | Read from the screen | Usage and plan bars |
+|---|---|---|---|---|
+| Claude Code | `deck install --claude --apply` | everything but Esc and a denied permission | those two endings, and dialogs | yes, from its statusLine |
+| Codex CLI 0.124+ | `deck install --codex --apply`, then `/hooks` in Codex to trust them | prompts, tools, permission requests, the end of a turn; a closed session from 0.145, Esc from 0.150 | dialogs and work in progress | no: Codex only writes them to its transcript, which the deck does not read |
+
+Codex support is built from Codex's published hook schema and its interface source. It has not yet been replayed from recorded sessions the way Claude's transitions are, so treat it as experimental: a denied approval may show as running until your next prompt.
+
+Each hook remembers the pane's foreground command, so an agent started through a wrapper (Codex from npm runs as `node`) is tracked and forgotten like any other.
+
 ## Usage and plan limits
 
 `deck install --claude` also sets Claude Code's `statusLine` to `deck statusline`, unless you have a status line of your own. To keep yours and still feed the deck, add `--wrap-statusline`: Claude then runs the deck, which records the numbers and prints whatever your command prints. `deck uninstall` puts your command back exactly.
@@ -218,7 +229,8 @@ flowchart LR
   cmd --> install[internal/install<br/>settings.json]
   deck --> events[internal/events<br/>state change log]
   deck --> machine[internal/machine<br/>fate statechart]
-  deck --> hook[internal/hook<br/>payload to event]
+  deck --> agent[internal/agent<br/>Claude, Codex]
+  agent --> hook[internal/hook<br/>payload to event]
   deck --> store[internal/store<br/>flock records]
   deck --> tmux[internal/tmux]
   ui --> usage[internal/usage<br/>statusLine data]

@@ -65,6 +65,9 @@ func TestTransitions(t *testing.T) {
 		{"working screen leaves running alone", []Event{Prompt{}, Screen{Kind: ScreenWorking}}, Running},
 		{"done agent seen working again", []Event{Prompt{}, Stop{}, Screen{Kind: ScreenWorking}}, Running},
 		{"begin resets any state", []Event{Prompt{}, Permission{}, Begin{}}, Idle},
+		{"interrupt ends a running turn", []Event{Prompt{}, ToolStart{}, Interrupt{}}, Idle},
+		{"interrupt ends a pending prompt", []Event{Prompt{}, Permission{}, Interrupt{}}, Idle},
+		{"interrupt leaves a finished turn alone", []Event{Prompt{}, Stop{}, Interrupt{}}, Done},
 		{"new prompt from done", []Event{Prompt{}, Stop{}, Prompt{}}, Running},
 	}
 	for _, c := range cases {
@@ -168,7 +171,7 @@ func FuzzSequences(f *testing.F) {
 				Permission{At: at, Reason: ReasonPermission, Tool: "Bash"}, NeedsInput{At: at, Reason: ReasonElicitation},
 				Stop{At: at}, Stop{At: at, Background: 1}, IdlePrompt{At: at}, Focus{At: at},
 				Screen{At: at, Kind: ScreenIdle}, Screen{At: at, Kind: ScreenWorking}, Screen{At: at, Kind: ScreenDialog},
-				Screen{At: at, Kind: ScreenNoDialog},
+				Screen{At: at, Kind: ScreenNoDialog}, Interrupt{At: at},
 			}
 			e := events[int(b)%len(events)]
 			prev := res

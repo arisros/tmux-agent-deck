@@ -7,11 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/arisros/tmux-agent-deck/internal/agent"
 	"github.com/arisros/tmux-agent-deck/internal/events"
 	"github.com/arisros/tmux-agent-deck/internal/hook"
 	"github.com/arisros/tmux-agent-deck/internal/machine"
@@ -52,10 +52,14 @@ func New(t Tmux, dir string) (*Deck, error) {
 // Signal is the wait-for channel sidebars block on.
 const Signal = "deck"
 
-// Hook applies one hook payload from a Claude session running in pane.
+// Hook applies one hook payload from an agent session running in pane.
 func (d *Deck) Hook(p hook.Payload, pane string) error {
 	now := d.Now().Unix()
-	action, ev := hook.Map(p, now)
+	a, ok := agent.For(p.Agent)
+	if !ok {
+		return fmt.Errorf("unknown agent %q", p.Agent)
+	}
+	action, ev := a.Map(p, now)
 	if action == hook.Ignore || p.SessionID == "" {
 		return nil
 	}
@@ -90,11 +94,11 @@ func (d *Deck) Hook(p hook.Payload, pane string) error {
 		if err != nil {
 			return err
 		}
-		if err := l.Save(store.Record{Pane: pane, Snapshot: res.Snapshot}); err != nil {
+		if err := l.Save(store.Record{Pane: pane, Agent: a.Name, Snapshot: res.Snapshot}); err != nil {
 			return err
 		}
 		d.emitResult(events.Begin, p.SessionID, pane, res)
-		return d.publish(pane, p.SessionID, res, "")
+		return d.publish(pane, p.SessionID, a.Name, res, "")
 	}
 
 	var snap []byte
@@ -105,7 +109,7 @@ func (d *Deck) Hook(p hook.Payload, pane string) error {
 	if err != nil {
 		return err
 	}
-	if err := l.Save(store.Record{Pane: pane, Snapshot: res.Snapshot}); err != nil {
+	if err := l.Save(store.Record{Pane: pane, Agent: a.Name, Snapshot: res.Snapshot}); err != nil {
 		return err
 	}
 	if res.From != res.To {
@@ -123,7 +127,7 @@ func (d *Deck) Hook(p hook.Payload, pane string) error {
 	case res.Entered(machine.Done) && isStop(ev):
 		sound = "done"
 	}
-	return d.publish(pane, p.SessionID, res, sound)
+	return d.publish(pane, p.SessionID, a.Name, res, sound)
 }
 
 func isStop(e machine.Event) bool { _, ok := e.(machine.Stop); return ok }
@@ -138,8 +142,9 @@ func (d *Deck) Focus(pane string) error {
 }
 
 // Reconcile corrects a running or waiting agent from what its screen shows.
-// No hook fires on Esc mid-turn or on a denied permission, so without this an
-// agent would look busy until its next prompt.
+// Claude Code fires no hook on Esc mid-turn or on a denied permission, so
+// without this an agent would look busy until its next prompt. Each agent
+// reads its own screen; one the deck cannot read is left alone.
 func (d *Deck) Reconcile(pane, sid, state string) error {
 	if state != machine.Running && state != machine.Waiting {
 		return nil
@@ -150,40 +155,43 @@ func (d *Deck) Reconcile(pane, sid, state string) error {
 			return err
 		}
 	}
+	a := d.agentOf(sid)
+	if a.Classify == nil {
+		return nil
+	}
 	screen, err := d.Tmux.Capture(pane)
 	if err != nil {
 		return err
 	}
-	kind := Classify(screen)
+	kind := a.Classify(screen)
 	if kind == "" {
 		return nil
 	}
 	from := state
 	err = d.send(pane, sid, machine.Screen{At: d.Now().Unix(), Kind: kind})
 	if to, _ := d.Tmux.PaneOption(pane, "@deck_state"); to != from && d.Log != nil {
-		d.Log(fmt.Sprintf("reconcile %s: %s -> %s (screen %s, last line %q)", pane, from, to, kind, lastLine(screen)))
+		last := ""
+		if a.Evidence != nil {
+			last = a.Evidence(screen)
+		}
+		d.Log(fmt.Sprintf("reconcile %s: %s -> %s (screen %s, last line %q)", pane, from, to, kind, last))
 	}
 	return err
 }
 
-func lastLine(screen string) string {
-	lines := strings.Split(strings.TrimRight(screen, "\n "), "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		if t := strings.TrimSpace(lines[i]); strings.HasPrefix(t, "❯") && i > 0 {
-			return lastTranscriptLine(reverse(lines[:i]))
-		}
+// agentOf is the agent a session's record names; Claude when there is no
+// record, as for a pane found by its screen.
+func (d *Deck) agentOf(sid string) agent.Agent {
+	l, err := store.OpenExisting(d.Dir, sid)
+	if err != nil {
+		return agent.Claude
 	}
-	return ""
-}
-
-func reverse(in []string) []string {
-	out := make([]string, 0, len(in))
-	for i := len(in) - 1; i >= 0; i-- {
-		if strings.TrimSpace(in[i]) != "" {
-			out = append(out, in[i])
-		}
+	defer l.Close()
+	rec, _ := l.Record()
+	if a, ok := agent.For(rec.Agent); ok {
+		return a
 	}
-	return out
+	return agent.Claude
 }
 
 // ReconcileStale reconciles every agent that has been running or waiting for
@@ -197,17 +205,19 @@ func (d *Deck) ReconcileStale(panes []tmux.Pane, minAge time.Duration) {
 	}
 }
 
-// Discover publishes a state for every Claude pane the deck has not heard
+// Discover publishes a state for every agent pane the deck has not heard
 // from yet, read from its screen. An agent idle at its prompt when the hooks
 // were installed fires no hook until it is used again, and would otherwise
-// stay invisible. The state has no session record behind it; the session's
+// stay invisible. Only agents recognizable by their process name can be
+// found this way. The state has no session record behind it; the session's
 // next hook creates one and takes over. It returns how many panes it set.
 func (d *Deck) Discover(panes []tmux.Pane) int {
 	now := strconv.FormatInt(d.Now().Unix(), 10)
 	var cmds [][]string
 	var found []events.Event
 	for _, p := range panes {
-		if p.State != "" || p.Sidebar != "" || !tmux.IsClaude(p.Command) {
+		a, ok := detect(p.Command)
+		if p.State != "" || p.Sidebar != "" || !ok {
 			continue
 		}
 		screen, err := d.Tmux.Capture(p.ID)
@@ -215,7 +225,7 @@ func (d *Deck) Discover(panes []tmux.Pane) int {
 			continue
 		}
 		state := machine.Idle // a fresh or quiet session has no end marker yet
-		switch Classify(screen) {
+		switch a.Screen(screen) {
 		case machine.ScreenWorking:
 			state = machine.Running
 		case machine.ScreenDialog:
@@ -224,6 +234,7 @@ func (d *Deck) Discover(panes []tmux.Pane) int {
 		cmds = append(cmds,
 			[]string{"set-option", "-p", "-t", p.ID, "@deck_state", state},
 			[]string{"set-option", "-p", "-t", p.ID, "@deck_since", now},
+			[]string{"set-option", "-p", "-t", p.ID, "@deck_agent", a.Name},
 			remember(p.ID))
 		found = append(found, events.Event{Pane: p.ID, Kind: events.Discover, To: state, Source: machine.SourceScreen})
 	}
@@ -238,6 +249,15 @@ func (d *Deck) Discover(panes []tmux.Pane) int {
 		d.emit(e)
 	}
 	return len(found)
+}
+
+func detect(command string) (agent.Agent, bool) {
+	for _, a := range agent.All {
+		if a.Detect != nil && a.Detect(command) {
+			return a, true
+		}
+	}
+	return agent.Agent{}, false
 }
 
 // Sweep forgets every agent whose process has left its pane: the state
@@ -299,11 +319,15 @@ func (d *Deck) send(pane, sid string, ev machine.Event) error {
 	if res.From == res.To {
 		return nil
 	}
-	if err := l.Save(store.Record{Pane: rec.Pane, Snapshot: res.Snapshot}); err != nil {
+	if err := l.Save(store.Record{Pane: rec.Pane, Agent: rec.Agent, Snapshot: res.Snapshot}); err != nil {
 		return err
 	}
 	d.emitResult(ev.EventName(), sid, pane, res)
-	return d.publish(pane, sid, res, "")
+	name := rec.Agent
+	if name == "" {
+		name = agent.Claude.Name
+	}
+	return d.publish(pane, sid, name, res, "")
 }
 
 func (d *Deck) emitResult(kind, sid, pane string, res machine.Result) {
@@ -339,7 +363,7 @@ func reason(c machine.Ctx) string {
 	return c.Reason + " " + c.Tool
 }
 
-func (d *Deck) publish(pane, sid string, res machine.Result, sound string) error {
+func (d *Deck) publish(pane, sid, name string, res machine.Result, sound string) error {
 	if pane == "" {
 		return nil
 	}
@@ -347,6 +371,7 @@ func (d *Deck) publish(pane, sid string, res machine.Result, sound string) error
 		{"set-option", "-p", "-t", pane, "@deck_state", res.To},
 		{"set-option", "-p", "-t", pane, "@deck_since", strconv.FormatInt(res.Ctx.Since, 10)},
 		{"set-option", "-p", "-t", pane, "@deck_sid", sid},
+		{"set-option", "-p", "-t", pane, "@deck_agent", name},
 	}
 	cmds = append(cmds, remember(pane))
 	if why := reason(res.Ctx); why != "" {
@@ -379,101 +404,8 @@ func clear(pane string) [][]string {
 
 func unset(pane string) [][]string {
 	var cmds [][]string
-	for _, o := range []string{"@deck_state", "@deck_since", "@deck_sid", "@deck_reason", "@deck_cmd"} {
+	for _, o := range []string{"@deck_state", "@deck_since", "@deck_sid", "@deck_reason", "@deck_cmd", "@deck_agent"} {
 		cmds = append(cmds, []string{"set-option", "-p", "-u", "-t", pane, o})
 	}
 	return cmds
-}
-
-// Classify reads a Claude Code screen. It only concludes from explicit
-// markers; "" means no Claude screen, and callers then change nothing.
-//
-// The footer alone proves nothing: Claude drops "esc to interrupt" while a
-// tool runs in auto mode, while the user types, and when a narrow pane cuts
-// the line short. Idle therefore needs the transcript's own end marker right
-// above the input box: "Interrupted" (Esc, or a denied permission) or
-// "· done 4:12" (a finished turn).
-func Classify(screen string) string {
-	lines := strings.Split(strings.TrimRight(screen, "\n "), "\n")
-	var tail []string
-	for i := len(lines) - 1; i >= 0 && len(tail) < 30; i-- {
-		if strings.TrimSpace(lines[i]) != "" {
-			tail = append(tail, lines[i])
-		}
-	}
-	has := func(s string) bool {
-		for _, l := range tail {
-			if strings.Contains(l, s) {
-				return true
-			}
-		}
-		return false
-	}
-	footer, below := "", tail
-	for i, l := range tail {
-		if i >= 8 {
-			break
-		}
-		if idleFooter(l) {
-			footer, below = l, tail[:i]
-			break
-		}
-	}
-	busyBelow := false
-	for _, l := range below {
-		if strings.Contains(l, "tokens") {
-			busyBelow = true
-		}
-	}
-	switch {
-	case has("Do you want to proceed?"), has("Enter to select"), has("Esc to cancel"):
-		return machine.ScreenDialog
-	case has("esc to interrupt"), has("queued messages"), strings.Contains(footer, "esc to"), busyBelow:
-		return machine.ScreenWorking
-	}
-	for _, l := range tail {
-		// The spinner above the input box: "✽ Mustering… (4m 8s · ↓ 13.3k tokens)".
-		if spinner.MatchString(l) {
-			return machine.ScreenWorking
-		}
-	}
-	box := -1
-	for i, l := range tail {
-		if strings.HasPrefix(strings.TrimSpace(l), "❯") {
-			box = i
-			break
-		}
-	}
-	if box < 0 {
-		return ""
-	}
-	if last := lastTranscriptLine(tail[box+1:]); strings.Contains(last, "Interrupted") || turnDone.MatchString(last) {
-		return machine.ScreenIdle
-	}
-	return machine.ScreenNoDialog
-}
-
-// spinner matches Claude's working line, "✽ Mustering… (4m 8s · ↓ 13.3k tokens)".
-var spinner = regexp.MustCompile(`^\s*\S+ \S+… \(\d`)
-
-// turnDone matches Claude's end-of-turn line, "✻ Worked for 2s · done 2:09 AM".
-var turnDone = regexp.MustCompile(`· done \d{1,2}:\d{2}`)
-
-// lastTranscriptLine is the first line above the input box that belongs to
-// the transcript: separators and right-aligned notices ("✔ Update
-// installed") are skipped.
-func lastTranscriptLine(above []string) string {
-	for _, l := range above {
-		t := strings.TrimSpace(l)
-		if strings.Count(t, "─") >= 10 || len(l)-len(strings.TrimLeft(l, " ")) >= 20 {
-			continue
-		}
-		return t
-	}
-	return ""
-}
-
-func idleFooter(line string) bool {
-	return strings.Contains(line, "for shortcuts") || strings.Contains(line, "shift+tab to cycle") ||
-		strings.Contains(line, "mode on")
 }

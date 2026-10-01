@@ -28,6 +28,7 @@ stateDiagram-v2
     s_running --> s_done : IdlePrompt / since
     s_running --> s_done : Stop / since,bg
     s_running --> s_idle : Begin / since
+    s_running --> s_idle : Interrupt / since
     s_running --> s_idle : Screen [idle] / since
     s_running --> s_running : Stop [background] / bg
     s_running --> s_waiting : NeedsInput / since,why
@@ -35,6 +36,7 @@ stateDiagram-v2
     s_running --> s_waiting : Screen [dialog] / since,why
     s_waiting --> s_done : Stop / since,bg
     s_waiting --> s_idle : Begin / since
+    s_waiting --> s_idle : Interrupt / since
     s_waiting --> s_idle : Screen [idle] / since
     s_waiting --> s_running : Prompt / since
     s_waiting --> s_running : Screen [answered] / since

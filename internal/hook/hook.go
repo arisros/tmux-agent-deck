@@ -1,4 +1,6 @@
-// Package hook turns a Claude Code hook payload into a machine event.
+// Package hook decodes hook payloads and turns Claude Code's into machine
+// events. Other agents that share the payload shape map theirs in package
+// agent.
 //
 // The mapping follows sequences recorded from real sessions (see
 // test/fixtures), not only the documentation. Notably: a denied permission and
@@ -26,6 +28,9 @@ type Payload struct {
 	AgentID          string          `json:"agent_id"`
 	Source           string          `json:"source"`
 	BackgroundTasks  json.RawMessage `json:"background_tasks"`
+	// Agent names the agent that sent the payload. It comes from the hook
+	// command line (deck hook --agent), never from the payload.
+	Agent string `json:"-"`
 }
 
 // Decode reads one payload.

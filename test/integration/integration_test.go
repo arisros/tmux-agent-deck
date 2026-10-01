@@ -542,6 +542,84 @@ func TestInstallRoundTrip(t *testing.T) {
 	}
 }
 
+// A Codex installed from npm shows as "node" in tmux; sleep stands in for
+// it. The hook command names the agent, and the pane's command is all the
+// deck needs to know it is still there.
+func TestCodexAgent(t *testing.T) {
+	h := newHarness(t)
+	a := h.tmux("split-window", "-d", "-t", "alpha", "-P", "-F", "#{pane_id}", "sleep 100000")
+	h.eventually(func() bool { return h.opt(a, "pane_current_command") == "sleep" }, "codex stand-in running")
+	steps := []struct{ event, extra, state string }{
+		{"SessionStart", `,"source":"startup"`, "idle"},
+		{"UserPromptSubmit", "", "running"},
+		{"PermissionRequest", `,"tool_name":"apply_patch"`, "waiting"},
+		{"PostToolUse", "", "running"},
+		{"Interrupt", "", "idle"},
+		{"UserPromptSubmit", "", "running"},
+	}
+	for _, s := range steps {
+		h.hookAs("codex", a, s.event, s.extra)
+		if got := h.opt(a, "@deck_state"); got != s.state {
+			t.Fatalf("after %s: state %q, want %q", s.event, got, s.state)
+		}
+	}
+	if got := h.opt(a, "@deck_agent"); got != "codex" {
+		t.Errorf("@deck_agent = %q", got)
+	}
+	if out := h.deck("", "list"); !strings.Contains(out, "codex · ") || !strings.Contains(out, "running") {
+		t.Errorf("list does not show the codex agent:\n%s", out)
+	}
+	if out := h.deck("", "list", "--json"); !strings.Contains(out, `"agent": "codex"`) {
+		t.Errorf("JSON lacks the agent:\n%s", out)
+	}
+	h.hookAs("codex", a, "SessionEnd", "")
+	if got := h.opt(a, "@deck_state") + h.opt(a, "@deck_agent"); got != "" {
+		t.Errorf("after SessionEnd the pane keeps %q", got)
+	}
+}
+
+func TestCodexInstallMergesAndRestores(t *testing.T) {
+	h := newHarness(t)
+	file := filepath.Join(t.TempDir(), "hooks.json")
+	original := "{\n  \"hooks\": {\n    \"SessionStart\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"other-tool hook\"\n          }\n        ]\n      }\n    ]\n  }\n}\n"
+	if err := os.WriteFile(file, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run := func(version string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command(h.bin, args...)
+		cmd.Env = append(h.env(""), "DECK_CODEX_VERSION="+version)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("deck %v: %v\n%s", args, err, out)
+		}
+		return string(out)
+	}
+	out := run("codex-cli 0.132.0", "install", "--codex", "--apply", "--settings", file)
+	b, _ := os.ReadFile(file)
+	for _, want := range []string{"other-tool hook", `"PermissionRequest"`, "hook --agent codex", "# tmux-agent-deck"} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("hooks file lacks %q:\n%s", want, b)
+		}
+	}
+	// 0.132 knows neither event: naming one could invalidate the file.
+	if strings.Contains(string(b), "Interrupt") || strings.Contains(string(b), "SessionEnd") {
+		t.Errorf("installed an event this Codex does not know:\n%s", b)
+	}
+	if !strings.Contains(out, "/hooks") || !strings.Contains(out, "no SessionEnd or Interrupt") {
+		t.Errorf("install does not say what the user must do and what is missing:\n%s", out)
+	}
+	run("codex-cli 0.159.3", "install", "--codex", "--apply", "--settings", file)
+	if b, _ := os.ReadFile(file); !strings.Contains(string(b), `"Interrupt"`) || !strings.Contains(string(b), `"SessionEnd"`) ||
+		strings.Count(string(b), "hook --agent codex") != 8 {
+		t.Errorf("a newer Codex should get all eight events, once each:\n%s", b)
+	}
+	run("", "uninstall", "--codex", "--apply", "--settings", file)
+	if b, _ := os.ReadFile(file); string(b) != original {
+		t.Errorf("uninstall did not restore the file:\n%s", b)
+	}
+}
+
 func TestDoctorReportsAHealthySetup(t *testing.T) {
 	h := newHarness(t)
 	claude := t.TempDir()

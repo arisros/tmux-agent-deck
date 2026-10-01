@@ -39,6 +39,7 @@ func newDeck() (*deck.Deck, tmux.Client, error) {
 func runHook(args []string, stdin io.Reader) error {
 	fs := flag.NewFlagSet("hook", flag.ContinueOnError)
 	rec := fs.Bool("record", false, "only record a redacted event")
+	name := fs.String("agent", "", "the agent sending the event (default claude)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -52,6 +53,7 @@ func runHook(args []string, stdin io.Reader) error {
 	} else {
 		var p hook.Payload
 		if p, err = hook.Decode(stdin); err == nil {
+			p.Agent = *name
 			var d *deck.Deck
 			if d, _, err = newDeck(); err == nil {
 				err = d.Hook(p, pane)

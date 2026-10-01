@@ -22,7 +22,7 @@ type Row struct {
 	tmux.Pane
 	Name  string
 	Age   time.Duration
-	Usage *usage.Session // nil until Claude has run the deck's statusLine for it
+	Usage *usage.Session // nil until the agent has reported usage, which only Claude Code does
 }
 
 // Attach joins each row to the usage its Claude session reported: by session
@@ -53,6 +53,22 @@ func Attach(rows []Row, sessions map[string]usage.Session) []Row {
 func (r Row) Why() (cause, tool string) {
 	cause, tool, _ = strings.Cut(r.Reason, " ")
 	return cause, tool
+}
+
+// Tags are the short facts shown in front of a row's name: the agent when it
+// is not Claude Code, and the tool a permission is asked for.
+func (r Row) Tags() string {
+	var tags []string
+	if r.Agent != "" && r.Agent != "claude" {
+		tags = append(tags, r.Agent)
+	}
+	if _, tool := r.Why(); tool != "" {
+		tags = append(tags, tool)
+	}
+	if len(tags) == 0 {
+		return ""
+	}
+	return strings.Join(tags, " · ") + " · "
 }
 
 // Target is the tmux address shown for a row.

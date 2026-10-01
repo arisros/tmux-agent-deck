@@ -45,16 +45,16 @@ func TestChunkSmallBatchIsOneCall(t *testing.T) {
 
 func TestParsePanes(t *testing.T) {
 	line := strings.Join([]string{"%5", "work", "$1", "3", "@7", "2", "api", "2.1.284", "✳ Fix it", "/tmp",
-		"waiting", "s1", "", "1700", "1", "0", "2", "3", "permission Bash", "2.1.284"}, sep)
+		"waiting", "s1", "", "1700", "1", "0", "2", "3", "permission Bash", "2.1.284", "claude"}, sep)
 	// The last fields are usually empty, so the line ends in tabs.
 	quiet := strings.Join([]string{"%6", "work", "$1", "3", "@7", "3", "api", "2.1.284", "", "/tmp",
-		"running", "s2", "", "1701", "0", "0", "2", "3", "", ""}, sep)
+		"running", "s2", "", "1701", "0", "0", "2", "3", "", "", ""}, sep)
 	got := ParsePanes(line + "\n" + "garbage\n" + quiet + "\n")
 	if len(got) != 2 {
 		t.Fatalf("got %d panes", len(got))
 	}
 	p := got[0]
-	if p.ID != "%5" || p.State != "waiting" || p.Since != 1700 || !p.PaneActive || p.WindowActive || !p.Attached || p.Title != "✳ Fix it" || p.WindowPanes != 3 || p.Reason != "permission Bash" || p.Cmd != "2.1.284" {
+	if p.ID != "%5" || p.State != "waiting" || p.Since != 1700 || !p.PaneActive || p.WindowActive || !p.Attached || p.Title != "✳ Fix it" || p.WindowPanes != 3 || p.Reason != "permission Bash" || p.Cmd != "2.1.284" || p.Agent != "claude" {
 		t.Errorf("got %+v", p)
 	}
 	if got[1].ID != "%6" || got[1].Reason != "" {

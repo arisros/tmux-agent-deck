@@ -60,7 +60,7 @@ func (l *List) Visible() []Row {
 	f := strings.ToLower(l.Filter)
 	var out []Row
 	for _, r := range l.All {
-		hay := strings.ToLower(r.Name + " " + r.Target() + " " + r.Path + " " + r.State + " " + r.Reason)
+		hay := strings.ToLower(r.Name + " " + r.Target() + " " + r.Path + " " + r.State + " " + r.Reason + " " + r.Agent)
 		if strings.Contains(hay, f) {
 			out = append(out, r)
 		}
@@ -198,8 +198,8 @@ func Popup(l *List, w, h int) []string {
 		r := rows[i]
 		st := StyleOf(r.State)
 		name := r.Name
-		if _, tool := r.Why(); tool != "" {
-			name = dim + tool + " · " + reset + name
+		if tags := r.Tags(); tags != "" {
+			name = dim + tags + reset + name
 		}
 		line := fmt.Sprintf("%s%s%s%s %s %s %s %s %s %s",
 			l.marker(r), st.Color, st.Glyph, reset,
@@ -242,7 +242,11 @@ func Sidebar(l *List, others []Row, session string, focused bool, w, h int) []st
 	for i := first; i < last; i++ {
 		r := rows[i]
 		st := StyleOf(r.State)
-		head := l.marker(r) + st.Color + st.Glyph + reset + " " + Fit(r.Name, w-3)
+		label := r.Name
+		if r.Agent != "" && r.Agent != "claude" {
+			label = r.Agent + " · " + label
+		}
+		head := l.marker(r) + st.Color + st.Glyph + reset + " " + Fit(label, w-3)
 		detail := r.Window + "." + r.Index + " · " + Age(r.Age) + " · " + filepath.Base(r.Path)
 		if r.Usage != nil && r.Usage.ContextUsed != nil {
 			detail = r.Window + "." + r.Index + " · " + Bar(*r.Usage.ContextUsed, 5) + dim +
@@ -254,9 +258,9 @@ func Sidebar(l *List, others []Row, session string, focused bool, w, h int) []st
 		sub := l.marker(r) + dim + "  " + Fit(detail, w-3) + reset
 		switch {
 		case focused && i == cur:
-			head = reverse + " " + st.Glyph + " " + Fit(r.Name, w-3)
+			head = reverse + " " + st.Glyph + " " + Fit(label, w-3)
 		case r.ID == l.Current:
-			head = hereBar + hereBg + st.Color + st.Glyph + reset + hereBg + " " + bold + Fit(r.Name, w-3) + reset
+			head = hereBar + hereBg + st.Color + st.Glyph + reset + hereBg + " " + bold + Fit(label, w-3) + reset
 			sub = hereBar + hereBg + dim + "  " + Fit(detail, w-3) + reset
 		}
 		lines = append(lines, head, sub)

@@ -38,15 +38,17 @@ setup:
   install --claude [--record] [--wrap-statusline] [--apply] [--settings FILE]
                                        add the hooks and statusLine to Claude settings (preview by default);
                                        --wrap-statusline keeps a statusLine of your own and records usage through it
-  uninstall --claude [--apply] [--settings FILE]
-                                       remove every deck hook and the deck's statusLine
+  install --codex [--record] [--apply] [--settings FILE]
+                                       add the hooks to Codex's hooks.json; trust them with /hooks in Codex
+  uninstall --claude|--codex [--apply] [--settings FILE]
+                                       remove every deck hook, and the deck's statusLine from Claude
   doctor                               check the installation
   tmux-init                            bind keys, set tmux hooks and formats (run by the tpm entrypoint)
   describe                             print the state machine as Mermaid
   version, --version, -h, --help
 
-called by Claude Code and tmux, not by hand:
-  hook [--record]                      apply a hook event read from stdin
+called by the agents and tmux, not by hand:
+  hook [--agent NAME] [--record]       apply a hook event read from stdin
   statusline                           record usage and plan limits, print Claude's status line
   focus <pane>                         the user looked at pane: a done agent becomes idle
   reconcile <pane>                     correct a running or waiting agent from its screen

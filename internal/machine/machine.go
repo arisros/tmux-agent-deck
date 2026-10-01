@@ -106,6 +106,10 @@ type Stop struct {
 	Background int
 }
 
+// Interrupt is the user stopping a turn, for agents whose hooks report it.
+// Claude Code reports nothing, and its Esc is read from the screen instead.
+type Interrupt struct{ At int64 }
+
 // Focus means the user looked at the pane.
 type Focus struct{ At int64 }
 
@@ -151,6 +155,9 @@ func (IdlePrompt) EventName() string { return "IdlePrompt" }
 func (Stop) EventName() string { return "Stop" }
 
 // EventName implements Event.
+func (Interrupt) EventName() string { return "Interrupt" }
+
+// EventName implements Event.
 func (Focus) EventName() string { return "Focus" }
 
 // EventName implements Event.
@@ -180,6 +187,8 @@ func at(e Event) int64 {
 	case Stop:
 		return e.At
 	case Focus:
+		return e.At
+	case Interrupt:
 		return e.At
 	case Screen:
 		return e.At
@@ -270,15 +279,17 @@ func New() (*Machine, error) {
 				"NeedsInput": {to(Waiting)},
 				"Stop":       stopTransitions(),
 				"IdlePrompt": {to(Done)},
+				"Interrupt":  {to(Idle)},
 				"Screen":     {when(Idle, "idle", screen(ScreenIdle)), when(Waiting, "dialog", screen(ScreenDialog))},
 			}},
 			// A subagent's tool finishing says nothing about the main agent's
 			// pending prompt, so only a main-agent ToolEnd resolves waiting.
 			Waiting: {On: map[string][]tr{
-				"Begin":   {to(Idle)},
-				"ToolEnd": {when(Running, "main agent", mainAgent)},
-				"Prompt":  {to(Running)},
-				"Stop":    stopTransitions(),
+				"Begin":     {to(Idle)},
+				"ToolEnd":   {when(Running, "main agent", mainAgent)},
+				"Prompt":    {to(Running)},
+				"Stop":      stopTransitions(),
+				"Interrupt": {to(Idle)},
 				"Screen": {when(Idle, "idle", screen(ScreenIdle)), when(Running, "working", screen(ScreenWorking)),
 					when(Running, "answered", screen(ScreenNoDialog))},
 			}},

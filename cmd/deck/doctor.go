@@ -101,6 +101,13 @@ func runDoctor(_ []string) error {
 		}
 	}
 
+	// Other agents are only reported once the deck is installed for them.
+	if hooksFile, err := os.ReadFile(codexHooksPath()); err == nil {
+		if events, _ := install.Owned(hooksFile); len(events) > 0 {
+			check(true, "Codex hooks", strconv.Itoa(len(events))+" events; they run only once trusted with /hooks in Codex")
+		}
+	}
+
 	dir := store.DefaultDir()
 	files, _ := filepath.Glob(filepath.Join(dir, "*.json"))
 	check(true, "state directory", fmt.Sprintf("%s (%d sessions)", dir, len(files)))
