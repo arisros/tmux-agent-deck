@@ -45,8 +45,12 @@ setup:
                                        --wrap-statusline keeps a statusLine of your own and records usage through it
   install --codex [--record] [--apply] [--settings FILE]
                                        add the hooks to Codex's hooks.json; trust them with /hooks in Codex
-  uninstall --claude|--codex [--apply] [--settings FILE]
-                                       remove every deck hook, and the deck's statusLine from Claude
+  install --gemini [--record] [--apply] [--settings FILE]
+                                       add the hooks to Gemini CLI's settings.json
+  install --opencode [--apply] [--settings FILE]
+                                       write the plugin that reports opencode's events
+  uninstall --claude|--codex|--gemini|--opencode [--apply] [--settings FILE]
+                                       remove every deck hook, the deck's statusLine from Claude, or the plugin
   doctor                               check the installation
   tmux-init                            bind keys, set tmux hooks and formats (run by the tpm entrypoint)
   describe                             print the state machine as Mermaid

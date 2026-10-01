@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/arisros/tmux-agent-deck/internal/agent"
 	"github.com/arisros/tmux-agent-deck/internal/install"
 	"github.com/arisros/tmux-agent-deck/internal/store"
 )
@@ -42,7 +43,7 @@ func runInstall(args []string, add bool) error {
 		}
 	}
 	if t == nil {
-		return errors.New("name the agent: --claude or --codex")
+		return errors.New("name the agent: --claude, --codex, --gemini or --opencode")
 	}
 	if *path == "" {
 		*path = t.path()
@@ -54,6 +55,9 @@ func runInstall(args []string, add bool) error {
 		return err
 	}
 	var after []byte
+	if t.plugin != nil {
+		return installPlugin(t, *path, before, add, *apply)
+	}
 	if add {
 		bin, err := selfPath()
 		if err != nil {
@@ -63,11 +67,11 @@ func runInstall(args []string, add bool) error {
 		if note != "" {
 			fmt.Println("Note:", note)
 		}
-		h, events := install.Hook{Command: guarded(bin, "hook"+t.hookArgs), Timeout: 5}, live
+		h, events := install.Hook{Command: guarded(bin, "hook"+t.hookArgs), Timeout: t.timeout}, live
 		if *rec {
 			fmt.Printf("Note: the recorder replaces the live hooks; run install --%s again to return to them.\n", t.name)
 			// Recording never feeds state, so it may run async and out of order.
-			h, events = install.Hook{Command: guarded(bin, "hook --record"), Async: t.async, Timeout: 5}, recorded
+			h, events = install.Hook{Command: guarded(bin, "hook --record"), Async: t.async, Timeout: t.timeout}, recorded
 		}
 		after, err = install.Add(before, events, h)
 		if err != nil {
@@ -131,19 +135,99 @@ type target struct {
 	events     func() (live, recorded []string, note string)
 	hookArgs   string
 	async      bool // whether the agent's hooks take "async"
+	timeout    int  // in the agent's own unit
 	afterApply string
+	// plugin, when set, makes the target a single file the deck owns whole
+	// instead of hook entries merged into the agent's settings.
+	plugin func(bin string) []byte
+}
+
+// installPlugin writes or removes a plugin file. The deck owns the whole
+// file, and never touches one it did not write.
+func installPlugin(t *target, path string, before []byte, add, apply bool) error {
+	if before != nil && !strings.Contains(string(before), install.Marker) {
+		return fmt.Errorf("%s is not the deck's plugin; move it away first", path)
+	}
+	var after []byte
+	if add {
+		bin, err := selfPath()
+		if err != nil {
+			return err
+		}
+		after = t.plugin(bin)
+	}
+	if string(before) == string(after) {
+		fmt.Println("No change needed:", path)
+		return nil
+	}
+	if !apply {
+		verb := "write"
+		if !add {
+			verb = "remove"
+		}
+		fmt.Printf("Would %s %s\n\nPreview only. Repeat with --apply to save.\n", verb, path)
+		return nil
+	}
+	if !add {
+		if err := os.Remove(path); err != nil {
+			return err
+		}
+		fmt.Println("Removed", path)
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	if _, err := writeWithBackup(path, before, after); err != nil {
+		return err
+	}
+	fmt.Println("Wrote", path)
+	fmt.Println(t.afterApply)
+	return nil
+}
+
+func geminiSettingsPath() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".gemini", "settings.json")
+}
+
+func opencodePluginPath() string {
+	base := os.Getenv("XDG_CONFIG_HOME")
+	if base == "" {
+		home, _ := os.UserHomeDir()
+		base = filepath.Join(home, ".config")
+	}
+	return filepath.Join(base, "opencode", "plugins", "tmux-agent-deck.js")
+}
+
+var geminiEvents = []string{
+	"SessionStart", "SessionEnd", "BeforeAgent", "AfterAgent", "BeforeModel", "BeforeTool", "AfterTool", "Notification",
 }
 
 var targets = []target{
 	{
-		name: "claude", title: "Claude Code", path: defaultSettingsPath, async: true,
+		name: "claude", title: "Claude Code", path: defaultSettingsPath, async: true, timeout: 5,
 		events:     func() ([]string, []string, string) { return liveEvents, recordEvents, "" },
 		afterApply: "Running Claude sessions pick this up on their next settings reload; restart one if it does not.",
 	},
 	{
-		name: "codex", title: "Codex CLI", path: codexHooksPath, async: true, hookArgs: " --agent codex",
+		name: "codex", title: "Codex CLI", path: codexHooksPath, async: true, timeout: 5, hookArgs: " --agent codex",
 		events:     codexEvents,
 		afterApply: "Codex runs a new hook only after you trust it: open Codex and run /hooks. A changed command needs trusting again.",
+	},
+	{
+		// Gemini's timeout is in milliseconds.
+		name: "gemini", title: "Gemini CLI", path: geminiSettingsPath, timeout: 5000, hookArgs: " --agent gemini",
+		events: func() ([]string, []string, string) { return geminiEvents, geminiEvents, "" },
+		afterApply: "Restart Gemini CLI to load the hooks. If no agent shows up, its environment redaction is hiding TMUX_PANE from hooks: " +
+			"allow that variable in Gemini's settings.",
+	},
+	{
+		name: "opencode", title: "opencode", path: opencodePluginPath,
+		plugin: func(bin string) []byte {
+			return []byte(strings.ReplaceAll(agent.OpenCodePlugin, "__DECK__", strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(bin)))
+		},
+		afterApply: "Restart opencode to load the plugin. It reports sessions of an opencode started in a tmux pane, not ones reached with opencode attach.",
 	},
 }
 

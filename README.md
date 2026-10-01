@@ -156,8 +156,14 @@ The sidebar keeps its place as the full-height left column: it follows you to ot
 |---|---|---|---|---|
 | Claude Code | `deck install --claude --apply` | everything but Esc and a denied permission | those two endings, and dialogs | yes, from its statusLine |
 | Codex CLI 0.124+ | `deck install --codex --apply`, then `/hooks` in Codex to trust them | prompts, tools, permission requests, the end of a turn; a closed session from 0.145, Esc from 0.150 | dialogs and work in progress | no: Codex only writes them to its transcript, which the deck does not read |
+| Gemini CLI | `deck install --gemini --apply`, then restart it | prompts, tools, permission prompts, the end of a turn | nothing | no |
+| opencode | `deck install --opencode --apply`, then restart it | prompts, tools, permission requests and their answers, questions, an aborted turn, the end of a turn | nothing | no |
 
-Codex support is built from Codex's published hook schema and its interface source. It has not yet been replayed from recorded sessions the way Claude's transitions are, so treat it as experimental: a denied approval may show as running until your next prompt.
+Only Claude Code's transitions are replayed from recorded sessions. The other three are built from each project's published hook or plugin interface and tested against that, so treat them as experimental until recordings exist:
+
+- **Codex**: a denied approval may show as running until your next prompt.
+- **Gemini CLI**: its hooks may not see `TMUX_PANE` when its environment redaction is on; allow that variable in its settings if no agent shows up.
+- **opencode**: the deck writes a plugin file into `~/.config/opencode/plugins/` that runs `deck hook` for each event. It reports an opencode started in a tmux pane, not one reached with `opencode attach`. Closing opencode sends no event; the agent is forgotten when its pane changes.
 
 Each hook remembers the pane's foreground command, so an agent started through a wrapper (Codex from npm runs as `node`) is tracked and forgotten like any other.
 
@@ -240,7 +246,7 @@ flowchart LR
   cmd --> install[internal/install<br/>settings.json]
   deck --> events[internal/events<br/>state change log]
   deck --> machine[internal/machine<br/>fate statechart]
-  deck --> agent[internal/agent<br/>Claude, Codex]
+  deck --> agent[internal/agent<br/>Claude, Codex, Gemini, opencode]
   agent --> hook[internal/hook<br/>payload to event]
   deck --> store[internal/store<br/>flock records]
   deck --> tmux[internal/tmux]

@@ -108,6 +108,16 @@ func runDoctor(_ []string) error {
 		}
 	}
 
+	if settings, err := os.ReadFile(geminiSettingsPath()); err == nil {
+		if events, _ := install.Owned(settings); len(events) > 0 {
+			check(true, "Gemini CLI hooks", strconv.Itoa(len(events))+" events")
+		}
+	}
+	if plugin, err := os.ReadFile(opencodePluginPath()); err == nil && strings.Contains(string(plugin), install.Marker) {
+		_, statErr := os.Stat(strings.Trim(between(string(plugin), `const DECK = "`, `"`), " "))
+		check(statErr == nil, "opencode plugin", "installed; run deck install --opencode --apply again if the deck has moved")
+	}
+
 	dir := store.DefaultDir()
 	files, _ := filepath.Glob(filepath.Join(dir, "*.json"))
 	check(true, "state directory", fmt.Sprintf("%s (%d sessions)", dir, len(files)))
@@ -154,6 +164,16 @@ func tmuxAtLeast(v string, major, minor int) bool {
 	maj, _ := strconv.Atoi(m[1])
 	mnr, _ := strconv.Atoi(m[2])
 	return maj > major || (maj == major && mnr >= minor)
+}
+
+// between is the text after the first start and before the next end.
+func between(s, start, end string) string {
+	_, rest, ok := strings.Cut(s, start)
+	if !ok {
+		return ""
+	}
+	out, _, _ := strings.Cut(rest, end)
+	return out
 }
 
 func contains(list []string, s string) bool {

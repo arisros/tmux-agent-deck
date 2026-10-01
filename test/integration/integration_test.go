@@ -724,6 +724,170 @@ func TestListFiltersAndReportsBranch(t *testing.T) {
 	}
 }
 
+func TestGeminiAgent(t *testing.T) {
+	h := newHarness(t)
+	a := h.tmux("split-window", "-d", "-t", "alpha", "-P", "-F", "#{pane_id}", "sleep 100000")
+	h.eventually(func() bool { return h.opt(a, "pane_current_command") == "sleep" }, "gemini stand-in running")
+	steps := []struct{ event, extra, state string }{
+		{"SessionStart", `,"source":"startup"`, "idle"},
+		{"BeforeAgent", "", "running"},
+		{"BeforeModel", "", "running"},
+		{"BeforeTool", `,"tool_name":"run_shell_command"`, "running"},
+		{"Notification", `,"notification_type":"ToolPermission"`, "waiting"},
+		// Denied: no tool runs, and the next model call is all Gemini says.
+		{"BeforeModel", "", "running"},
+		{"AfterAgent", "", "done"},
+	}
+	for _, s := range steps {
+		h.hookAs("gemini", a, s.event, s.extra)
+		if got := h.opt(a, "@deck_state"); got != s.state {
+			t.Fatalf("after %s: state %q, want %q", s.event, got, s.state)
+		}
+	}
+	if out := h.deck("", "list"); !strings.Contains(out, "gemini · ") {
+		t.Errorf("list does not show the gemini agent:\n%s", out)
+	}
+
+	settings := filepath.Join(t.TempDir(), "settings.json")
+	original := "{\n  \"theme\": \"dark\"\n}\n"
+	if err := os.WriteFile(settings, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h.deck("", "install", "--gemini", "--apply", "--settings", settings)
+	b, _ := os.ReadFile(settings)
+	for _, want := range []string{`"BeforeAgent"`, `"AfterAgent"`, "hook --agent gemini", `"timeout": 5000`, `"theme": "dark"`} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("settings lack %q:\n%s", want, b)
+		}
+	}
+	if strings.Contains(string(b), "statusLine") || strings.Contains(string(b), "UserPromptSubmit") {
+		t.Errorf("Claude's settings leaked into Gemini's:\n%s", b)
+	}
+	h.deck("", "uninstall", "--gemini", "--apply", "--settings", settings)
+	if b, _ := os.ReadFile(settings); string(b) != original {
+		t.Errorf("uninstall did not restore the file:\n%s", b)
+	}
+}
+
+// The opencode plugin runs under node here, fed the events opencode would
+// publish, and reports through the real deck binary to the real tmux server.
+func TestOpenCodePlugin(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not available to run the opencode plugin")
+	}
+	h := newHarness(t)
+	dir := t.TempDir()
+	plugin := filepath.Join(dir, "plugins", "tmux-agent-deck.js")
+	if out := h.deck("", "install", "--opencode", "--settings", plugin); !strings.Contains(out, "Preview only") {
+		t.Fatalf("install without --apply did not preview:\n%s", out)
+	}
+	out := h.deck("", "install", "--opencode", "--apply", "--settings", plugin)
+	src, err := os.ReadFile(plugin)
+	// The deck stores its own path with symlinks resolved.
+	bin, _ := filepath.EvalSymlinks(h.bin)
+	if err != nil || !strings.Contains(string(src), `const DECK = "`+bin+`"`) || !strings.Contains(out, "Restart opencode") {
+		t.Fatalf("plugin not written with the deck's path: %v\n%s", err, out)
+	}
+	// node only loads ES modules from .mjs outside a package.
+	module := filepath.Join(dir, "plugin.mjs")
+	if err := os.WriteFile(module, src, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a := h.tmux("split-window", "-d", "-t", "alpha", "-P", "-F", "#{pane_id}", "sleep 100000")
+	h.eventually(func() bool { return h.opt(a, "pane_current_command") == "sleep" }, "opencode stand-in running")
+
+	run := func(body string) {
+		t.Helper()
+		driver := filepath.Join(dir, "driver.mjs")
+		script := `const m = await import(process.argv[2])
+const hooks = await m.TmuxAgentDeck({})
+const ev = (type, properties) => hooks.event({ event: { type, properties } })
+const main = "ses_main"
+` + body
+		if err := os.WriteFile(driver, []byte(script), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command(node, driver, module)
+		cmd.Env = h.env(a)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("plugin failed: %v\n%s", err, out)
+		}
+	}
+	state := func() string { return h.opt(a, "@deck_state") }
+
+	run(`await ev("session.created", { sessionID: main, info: { id: main } })
+await hooks["chat.message"]({ sessionID: main })
+await hooks["tool.execute.before"]({ tool: "bash", sessionID: main })
+await ev("permission.asked", { sessionID: main, permission: "bash" })
+// The task tool's child session: its end is not the end of the turn.
+await ev("session.created", { sessionID: "ses_child", info: { id: "ses_child", parentID: main } })
+await hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_child" })
+await ev("session.idle", { sessionID: "ses_child" })
+`)
+	if got, why := state(), h.opt(a, "@deck_reason"); got != "waiting" || why != "permission bash" {
+		t.Fatalf("after permission.asked: %q %q, want waiting for bash", got, why)
+	}
+	if got := h.opt(a, "@deck_agent"); got != "opencode" {
+		t.Errorf("@deck_agent = %q", got)
+	}
+	run(`await ev("permission.replied", { sessionID: main, reply: "reject" })
+`)
+	if got := state(); got != "running" {
+		t.Fatalf("after a rejected permission: %q, want running", got)
+	}
+	run(`await ev("question.asked", { sessionID: main })
+`)
+	if got, why := state(), h.opt(a, "@deck_reason"); got != "waiting" || why != "question" {
+		t.Fatalf("after question.asked: %q %q", got, why)
+	}
+	run(`await ev("question.replied", { sessionID: main })
+await hooks["tool.execute.after"]({ tool: "bash", sessionID: main })
+await ev("session.idle", { sessionID: main })
+`)
+	if got := state(); got != "done" {
+		t.Fatalf("after session.idle: %q, want done", got)
+	}
+	run(`await hooks["chat.message"]({ sessionID: main })
+await ev("session.error", { sessionID: main, error: { name: "MessageAbortedError" } })
+await ev("session.idle", { sessionID: main })
+`)
+	if got := state(); got != "idle" {
+		t.Fatalf("after an aborted turn: %q, want idle", got)
+	}
+	// Events arrive in the order they happened even though nothing waits.
+	trace := h.deck("", "events", "--pane", a)
+	order := []string{"idle -> running", "running -> waiting", "waiting -> running", "running -> waiting", "waiting -> running", "running -> done", "done -> running", "running -> idle"}
+	at := 0
+	for _, want := range order {
+		i := strings.Index(trace[at:], want)
+		if i < 0 {
+			t.Fatalf("events out of order, %q missing after offset %d:\n%s", want, at, trace)
+		}
+		at += i + len(want)
+	}
+	run(`await ev("session.deleted", { sessionID: main, info: { id: main } })
+`)
+	if got := state(); got != "" {
+		t.Errorf("after session.deleted: %q", got)
+	}
+
+	// A plugin somebody else wrote at that path is never overwritten.
+	foreign := filepath.Join(dir, "foreign.js")
+	if err := os.WriteFile(foreign, []byte("export const Mine = async () => ({})\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(h.bin, "install", "--opencode", "--apply", "--settings", foreign)
+	cmd.Env = h.env("")
+	if out, err := cmd.CombinedOutput(); err == nil || !strings.Contains(string(out), "not the deck's plugin") {
+		t.Errorf("overwrote a foreign plugin: %v %s", err, out)
+	}
+	h.deck("", "uninstall", "--opencode", "--apply", "--settings", plugin)
+	if _, err := os.Stat(plugin); !os.IsNotExist(err) {
+		t.Errorf("uninstall left the plugin: %v", err)
+	}
+}
+
 func TestDoctorReportsAHealthySetup(t *testing.T) {
 	h := newHarness(t)
 	claude := t.TempDir()

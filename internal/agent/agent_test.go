@@ -9,7 +9,7 @@ import (
 )
 
 func TestFor(t *testing.T) {
-	for name, want := range map[string]string{"": "claude", "claude": "claude", "codex": "codex"} {
+	for name, want := range map[string]string{"": "claude", "claude": "claude", "codex": "codex", "gemini": "gemini", "opencode": "opencode"} {
 		if a, ok := For(name); !ok || a.Name != want {
 			t.Errorf("For(%q) = %q %v, want %q", name, a.Name, ok, want)
 		}
@@ -76,6 +76,67 @@ func TestCodexClassify(t *testing.T) {
 	for screen := range cases {
 		if Codex.Classify(screen) == machine.ScreenIdle {
 			t.Errorf("a Codex screen was read as idle, which nothing on it can prove: %q", screen)
+		}
+	}
+}
+
+func mapped(t *testing.T, a Agent, in string) (hook.Action, machine.Event) {
+	t.Helper()
+	p, err := hook.Decode(strings.NewReader(in))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return a.Map(p, 7)
+}
+
+func TestGeminiMap(t *testing.T) {
+	cases := []struct {
+		in     string
+		action hook.Action
+		want   machine.Event
+	}{
+		{`{"hook_event_name":"SessionStart","source":"resume"}`, hook.Begin, nil},
+		{`{"hook_event_name":"SessionEnd","reason":"exit"}`, hook.End, nil},
+		{`{"hook_event_name":"BeforeAgent","prompt":"x"}`, hook.Send, machine.Prompt{At: 7}},
+		{`{"hook_event_name":"BeforeTool","tool_name":"run_shell_command"}`, hook.Send, machine.ToolStart{At: 7}},
+		{`{"hook_event_name":"AfterTool","tool_name":"run_shell_command"}`, hook.Send, machine.ToolEnd{At: 7}},
+		{`{"hook_event_name":"BeforeModel"}`, hook.Send, machine.ToolEnd{At: 7}},
+		{`{"hook_event_name":"Notification","notification_type":"ToolPermission"}`, hook.Send, machine.NeedsInput{At: 7, Reason: machine.ReasonPermission}},
+		{`{"hook_event_name":"Notification","notification_type":"Other"}`, hook.Ignore, nil},
+		{`{"hook_event_name":"AfterAgent"}`, hook.Send, machine.Stop{At: 7}},
+		{`{"hook_event_name":"AfterModel"}`, hook.Ignore, nil},
+		{`{"hook_event_name":"PreCompress"}`, hook.Ignore, nil},
+		// Claude's names mean nothing to Gemini's mapping.
+		{`{"hook_event_name":"UserPromptSubmit"}`, hook.Ignore, nil},
+	}
+	for _, c := range cases {
+		if action, ev := mapped(t, Gemini, c.in); action != c.action || ev != c.want {
+			t.Errorf("%s: got %v %#v, want %v %#v", c.in, action, ev, c.action, c.want)
+		}
+	}
+}
+
+func TestOpenCodeMap(t *testing.T) {
+	cases := []struct {
+		in     string
+		action hook.Action
+		want   machine.Event
+	}{
+		{`{"hook_event_name":"SessionStart","source":"startup"}`, hook.Begin, nil},
+		{`{"hook_event_name":"SessionEnd"}`, hook.End, nil},
+		{`{"hook_event_name":"UserPromptSubmit"}`, hook.Send, machine.Prompt{At: 7}},
+		{`{"hook_event_name":"PreToolUse","tool_name":"bash"}`, hook.Send, machine.ToolStart{At: 7}},
+		{`{"hook_event_name":"PostToolUse","tool_name":"bash"}`, hook.Send, machine.ToolEnd{At: 7}},
+		{`{"hook_event_name":"PermissionRequest","tool_name":"bash"}`, hook.Send, machine.Permission{At: 7, Reason: machine.ReasonPermission, Tool: "bash"}},
+		{`{"hook_event_name":"PermissionRequest","tool_name":"AskUserQuestion"}`, hook.Send, machine.Permission{At: 7, Reason: machine.ReasonQuestion}},
+		{`{"hook_event_name":"PermissionReplied"}`, hook.Send, machine.ToolEnd{At: 7}},
+		{`{"hook_event_name":"Stop"}`, hook.Send, machine.Stop{At: 7}},
+		{`{"hook_event_name":"Interrupt"}`, hook.Send, machine.Interrupt{At: 7}},
+		{`{"hook_event_name":"Notification","notification_type":"idle_prompt"}`, hook.Ignore, nil},
+	}
+	for _, c := range cases {
+		if action, ev := mapped(t, OpenCode, c.in); action != c.action || ev != c.want {
+			t.Errorf("%s: got %v %#v, want %v %#v", c.in, action, ev, c.action, c.want)
 		}
 	}
 }
