@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/arisros/tmux-agent-deck/internal/events"
 	"github.com/arisros/tmux-agent-deck/internal/hook"
 	"github.com/arisros/tmux-agent-deck/internal/machine"
 	"github.com/arisros/tmux-agent-deck/internal/tmux"
@@ -335,25 +336,38 @@ func TestClassify(t *testing.T) {
 // adapter. The screen step stands in for the footer check a view or a
 // focus change runs, since those sequences end without any hook.
 func TestFixtures(t *testing.T) {
+	const (
+		prompt  = "Prompt idle>running hook"
+		askBash = "Permission running>waiting hook permission Bash"
+		resumed = "ToolEnd waiting>running hook"
+		stopped = "Stop running>done hook"
+		seen    = "Screen waiting>idle screen"
+	)
 	cases := map[string]struct {
 		hooksOnly string // state after the recorded hooks
 		screen    string // screen seen afterwards, "" for none
 		final     string
+		trace     []string // every state change, in order
 	}{
-		"permission-approve":  {machine.Done, "", machine.Done},
-		"permission-deny-esc": {machine.Waiting, screenIdle, machine.Idle},
-		"permission-deny-no":  {machine.Waiting, screenIdle, machine.Idle},
-		"esc-during-tool":     {machine.Waiting, screenIdle, machine.Idle},
-		"esc-queued-prompt":   {machine.Done, "", machine.Done},
-		"subagent":            {machine.Done, "", machine.Done},
-		"background-bash":     {machine.Done, "", machine.Done},
-		"ask-user-question":   {machine.Done, "", machine.Done},
-		"session-start-exit":  {"", "", ""},
+		"permission-approve":  {machine.Done, "", machine.Done, []string{prompt, askBash, resumed, stopped}},
+		"permission-deny-esc": {machine.Waiting, screenIdle, machine.Idle, []string{prompt, askBash, seen}},
+		"permission-deny-no":  {machine.Waiting, screenIdle, machine.Idle, []string{prompt, askBash, seen}},
+		"esc-during-tool":     {machine.Waiting, screenIdle, machine.Idle, []string{prompt, askBash, seen}},
+		"esc-queued-prompt":   {machine.Done, "", machine.Done, []string{prompt, askBash, "Prompt waiting>running hook", stopped}},
+		"subagent":            {machine.Done, "", machine.Done, []string{prompt, stopped}},
+		"background-bash":     {machine.Done, "", machine.Done, []string{prompt, askBash, resumed, "IdlePrompt running>done hook"}},
+		"ask-user-question":   {machine.Done, "", machine.Done, []string{prompt, "Permission running>waiting hook question", resumed, stopped}},
+		"session-start-exit":  {"", "", "", []string{"Begin idle>idle hook", prompt, stopped, "End > hook"}},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
 			f := newFake()
 			d := newDeck(t, f)
+			var trace []string
+			d.Emit = func(e events.Event) {
+				trace = append(trace, strings.TrimSpace(strings.Join(
+					[]string{e.Kind, e.From + ">" + e.To, e.Source, strings.TrimSpace(e.Reason + " " + e.Tool)}, " ")))
+			}
 			for _, line := range readFixture(t, name) {
 				send(t, d, "%1", line)
 			}
@@ -369,7 +383,33 @@ func TestFixtures(t *testing.T) {
 			if got := f.state("%1"); got != c.final {
 				t.Errorf("final: %q, want %q", got, c.final)
 			}
+			if got, want := strings.Join(trace, "\n"), strings.Join(c.trace, "\n"); got != want {
+				t.Errorf("trace:\n%s\nwant:\n%s", got, want)
+			}
 		})
+	}
+}
+
+func TestReasonIsPublishedAndCleared(t *testing.T) {
+	f := newFake()
+	d := newDeck(t, f)
+	why := func() string { return f.opts["%1/@deck_reason"] }
+	send(t, d, "%1", ev("UserPromptSubmit", ""))
+	send(t, d, "%1", ev("PermissionRequest", `,"tool_name":"Bash","tool_input":{"command":"secret"}`))
+	if got := why(); got != "permission Bash" {
+		t.Fatalf("reason = %q, want permission Bash", got)
+	}
+	send(t, d, "%1", ev("PostToolUse", ""))
+	if _, set := f.opts["%1/@deck_reason"]; set {
+		t.Errorf("reason still %q after the approval", why())
+	}
+	send(t, d, "%1", ev("PermissionRequest", `,"tool_name":"AskUserQuestion"`))
+	if got := why(); got != "question" {
+		t.Errorf("reason = %q, want question", got)
+	}
+	send(t, d, "%1", ev("SessionEnd", ""))
+	if _, set := f.opts["%1/@deck_reason"]; set {
+		t.Errorf("reason survives the session: %q", why())
 	}
 }
 
@@ -385,9 +425,9 @@ func readFixture(t *testing.T, name string) []string {
 	sc := bufio.NewScanner(file)
 	for sc.Scan() {
 		var r struct {
-			Event, NotificationType, Source, Reason string
-			BackgroundTasks                         *int `json:"background_tasks"`
-			Subagent                                bool
+			Event, NotificationType, Source, Reason, Tool string
+			BackgroundTasks                               *int `json:"background_tasks"`
+			Subagent                                      bool
 		}
 		if err := json.Unmarshal(sc.Bytes(), &r); err != nil {
 			t.Fatal(err)
@@ -402,6 +442,9 @@ func readFixture(t *testing.T, name string) []string {
 		}
 		if r.Source != "" {
 			p["source"] = r.Source
+		}
+		if r.Tool != "" {
+			p["tool_name"] = r.Tool
 		}
 		if r.Subagent {
 			p["agent_id"] = "a1"

@@ -43,7 +43,7 @@ set -g pane-border-format           ' #{pane_title}#{E:@deck_pane_icon} '
 
 | State | Glyph | Means | Clears when |
 |---|---|---|---|
-| waiting | ◆ white on red | Claude needs you: a permission prompt or a question | you answer it |
+| waiting | ◆ white on red | Claude needs you, and the deck says for what: `permission Bash`, `question`, `elicitation`, or `dialog` when only the screen showed it | you answer it |
 | done | ✔ blue | the turn finished while you were looking elsewhere | you look at the pane |
 | running | ● green, pulsing ● ◉ ◎ ◉ | working, including background tasks Claude will resume from | the turn ends |
 | idle | ○ grey | at the prompt, and you have seen it | you send a prompt |
@@ -81,6 +81,7 @@ flowchart LR
   H -->|flock| S[(session record)]
   H -->|fate state machine| H
   H -->|one tmux call| T[(pane options)]
+  H -->|one line per state change| E[(events.jsonl)]
   T --> F[tabs and borders<br/>tmux formats, no process]
   T -->|wait-for signal| SB[sidebar]
   T --> P[popup]
@@ -172,7 +173,7 @@ Set them before tpm loads the plugin.
 | Symptom | Look at |
 |---|---|
 | anything | `deck doctor` checks tmux, focus events, hooks, statusLine and the binary |
-| a state looks wrong | `~/.local/state/tmux-agent-deck/views.log`: every state a screen check changed, with the line it relied on, and why a view closed |
+| a state looks wrong | `deck events` lists every state change with what caused it (a hook, the screen, your focus); `--pane %12` narrows it, `--json` prints lines. It logs the stored state, so a turn you watched end reads `done` where the pane shows idle. `~/.local/state/tmux-agent-deck/views.log` adds the screen line a check relied on, and why a view closed |
 | the plugin did not load | `bin/install.log` and `bin/init.log` in the plugin directory |
 | old hook scripts color tabs or play sounds | remove them from `~/.claude/settings.json`; `deck doctor` flags tab coloring |
 | remove everything | `deck uninstall --claude --apply`, then the `@plugin` line |
@@ -193,6 +194,7 @@ flowchart LR
   cmd[cmd/deck] --> deck[internal/deck<br/>adapter]
   cmd --> ui[internal/ui<br/>popup, sidebar]
   cmd --> install[internal/install<br/>settings.json]
+  deck --> events[internal/events<br/>state change log]
   deck --> machine[internal/machine<br/>fate statechart]
   deck --> hook[internal/hook<br/>payload to event]
   deck --> store[internal/store<br/>flock records]

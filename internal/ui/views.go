@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/arisros/tmux-agent-deck/internal/machine"
 	"github.com/arisros/tmux-agent-deck/internal/usage"
 )
 
@@ -59,7 +60,7 @@ func (l *List) Visible() []Row {
 	f := strings.ToLower(l.Filter)
 	var out []Row
 	for _, r := range l.All {
-		hay := strings.ToLower(r.Name + " " + r.Target() + " " + r.Path + " " + r.State)
+		hay := strings.ToLower(r.Name + " " + r.Target() + " " + r.Path + " " + r.State + " " + r.Reason)
 		if strings.Contains(hay, f) {
 			out = append(out, r)
 		}
@@ -184,7 +185,7 @@ func Popup(l *List, w, h int) []string {
 	lines = append(lines, dim+strings.Repeat("─", w)+reset)
 	// " ◆ " + state + age + target + name + ctx + tokens + cost + folder,
 	// one space between columns.
-	nameW := w - 3 - (8 + 1) - (4 + 1) - (20 + 1) - 1 - (10 + 1) - (7 + 1) - (7 + 1) - 14
+	nameW := w - 3 - (labelW + 1) - (4 + 1) - (20 + 1) - 1 - (10 + 1) - (7 + 1) - (7 + 1) - 14
 	if nameW < 8 {
 		nameW = 8
 	}
@@ -196,9 +197,13 @@ func Popup(l *List, w, h int) []string {
 	for i := start; i < len(rows) && i < start+body; i++ {
 		r := rows[i]
 		st := StyleOf(r.State)
+		name := r.Name
+		if _, tool := r.Why(); tool != "" {
+			name = dim + tool + " · " + reset + name
+		}
 		line := fmt.Sprintf("%s%s%s%s %s %s %s %s %s %s",
 			l.marker(r), st.Color, st.Glyph, reset,
-			stateLabel(r.State), Fit(Age(r.Age), 4), Fit(r.Target(), 20), Fit(r.Name, nameW),
+			stateLabel(r), Fit(Age(r.Age), 4), Fit(r.Target(), 20), Fit(name, nameW),
 			UsageCols(r),
 			dim+Fit(filepath.Base(r.Path), 14)+reset)
 		switch {
@@ -242,6 +247,9 @@ func Sidebar(l *List, others []Row, session string, focused bool, w, h int) []st
 		if r.Usage != nil && r.Usage.ContextUsed != nil {
 			detail = r.Window + "." + r.Index + " · " + Bar(*r.Usage.ContextUsed, 5) + dim +
 				fmt.Sprintf(" %.0f%%", *r.Usage.ContextUsed) + " · " + Age(r.Age)
+		}
+		if r.State == machine.Waiting && r.Reason != "" {
+			detail = r.Window + "." + r.Index + " · " + r.Reason + " · " + Age(r.Age)
 		}
 		sub := l.marker(r) + dim + "  " + Fit(detail, w-3) + reset
 		switch {
@@ -304,12 +312,20 @@ func stripReset(s string) string {
 	return strings.ReplaceAll(s, dim, "")
 }
 
-// stateLabel is the state column; a waiting agent's label shouts.
-func stateLabel(state string) string {
-	if state == "waiting" {
-		return "\x1b[1;31m" + Fit(state, 8) + reset
+// labelW fits the longest reason a waiting agent shows, "permission".
+const labelW = 10
+
+// stateLabel is the state column; a waiting agent's label shouts, and names
+// what it waits for when the deck knows.
+func stateLabel(r Row) string {
+	if r.State != machine.Waiting {
+		return Fit(r.State, labelW)
 	}
-	return Fit(state, 8)
+	label := r.State
+	if cause, _ := r.Why(); cause != "" {
+		label = cause
+	}
+	return "\x1b[1;31m" + Fit(label, labelW) + reset
 }
 
 // window picks the rows the sidebar shows (two lines each) in body lines,

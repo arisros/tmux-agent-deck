@@ -11,6 +11,7 @@ import (
 	"github.com/arisros/fate/render"
 
 	"github.com/arisros/tmux-agent-deck/internal/deck"
+	"github.com/arisros/tmux-agent-deck/internal/events"
 	"github.com/arisros/tmux-agent-deck/internal/hook"
 	"github.com/arisros/tmux-agent-deck/internal/machine"
 	"github.com/arisros/tmux-agent-deck/internal/record"
@@ -24,6 +25,7 @@ func newDeck() (*deck.Deck, tmux.Client, error) {
 	d, err := deck.New(c, store.DefaultDir())
 	if d != nil {
 		d.Log = func(s string) { logView(s, nil) }
+		d.Emit = events.Writer(store.Root())
 	}
 	return d, c, err
 }

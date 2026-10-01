@@ -333,3 +333,37 @@ func TestDecodeMixedRead(t *testing.T) {
 		}
 	}
 }
+
+func TestWaitingRowSaysWhy(t *testing.T) {
+	ask := pane("%1", "a", "1", "waiting", "2.1.284", "✳ deploy", 0)
+	ask.Reason = "permission Bash"
+	question := pane("%2", "a", "2", "waiting", "2.1.284", "✳ schema", 0)
+	question.Reason = "question"
+	unknown := pane("%3", "a", "3", "waiting", "2.1.284", "✳ discovered", 0)
+	l := &List{All: Agents([]tmux.Pane{ask, question, unknown}, now)}
+
+	popup := Popup(l, 110, 10)
+	for i, want := range []string{"permission", "question", "waiting"} {
+		if line := popup[2+i]; !strings.Contains(line, want) {
+			t.Errorf("popup row %d lacks %q: %q", i, want, line)
+		}
+	}
+	if !strings.Contains(popup[2], "Bash · ") || strings.Contains(popup[3], " · ") {
+		t.Errorf("the tool belongs on the permission row only:\n%q\n%q", popup[2], popup[3])
+	}
+	for _, line := range popup {
+		if Width(line) > 110 {
+			t.Errorf("popup line is %d cells wide: %q", Width(line), line)
+		}
+	}
+
+	side := strings.Join(Sidebar(l, nil, "a", false, 34, 14), "\n")
+	if !strings.Contains(side, "1.0 · permission Bash · ") || !strings.Contains(side, "2.0 · question · ") {
+		t.Errorf("sidebar does not say why:\n%s", side)
+	}
+
+	l.Filter = "question"
+	if v := l.Visible(); len(v) != 1 || v[0].ID != "%2" {
+		t.Errorf("filtering by reason kept %v", v)
+	}
+}

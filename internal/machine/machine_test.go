@@ -88,6 +88,47 @@ func TestSinceMarksStateEntry(t *testing.T) {
 	}
 }
 
+func TestWhyAndSource(t *testing.T) {
+	m := mustNew(t)
+	bash := Permission{Reason: ReasonPermission, Tool: "Bash"}
+	cases := []struct {
+		name                 string
+		events               []Event
+		reason, tool, source string
+	}{
+		{"permission names its tool", []Event{Prompt{}, bash}, ReasonPermission, "Bash", SourceHook},
+		{"question has no tool", []Event{Prompt{}, Permission{Reason: ReasonQuestion}}, ReasonQuestion, "", SourceHook},
+		{"notification alone carries its reason", []Event{Prompt{}, NeedsInput{Reason: ReasonElicitation}}, ReasonElicitation, "", SourceHook},
+		{"the notification after a permission keeps the tool", []Event{Prompt{}, bash, NeedsInput{Reason: ReasonPermission}}, ReasonPermission, "Bash", SourceHook},
+		{"dialog found on screen", []Event{Prompt{}, Screen{Kind: ScreenDialog}}, ReasonDialog, "", SourceScreen},
+		{"approval clears the reason", []Event{Prompt{}, bash, ToolEnd{}}, "", "", SourceHook},
+		{"stop while waiting clears the reason", []Event{Prompt{}, bash, Stop{}}, "", "", SourceHook},
+		{"denial seen on screen clears the reason", []Event{Prompt{}, bash, Screen{Kind: ScreenIdle}}, "", "", SourceScreen},
+		{"background stop keeps the reason", []Event{Prompt{}, bash, Stop{Background: 1}}, ReasonPermission, "Bash", SourceHook},
+		{"focus is its own source", []Event{Prompt{}, Stop{}, Focus{}}, "", "", SourceFocus},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := drive(t, m, c.events...).Ctx
+			if got.Reason != c.reason || got.Tool != c.tool || got.Source != c.source {
+				t.Errorf("got %q %q from %q, want %q %q from %q", got.Reason, got.Tool, got.Source, c.reason, c.tool, c.source)
+			}
+		})
+	}
+}
+
+// A record written by v0.1.3 has no reason, tool or source in its context.
+func TestRestoresOlderSnapshot(t *testing.T) {
+	old := []byte(`{"version":1,"status":"running","value":"running","context":{"since":1790831616}}`)
+	res, err := Apply(mustNew(t), old, Permission{At: 5, Reason: ReasonQuestion})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.From != Running || res.To != Waiting || res.Ctx.Reason != ReasonQuestion {
+		t.Errorf("got %s -> %s (%+v)", res.From, res.To, res.Ctx)
+	}
+}
+
 func TestEntered(t *testing.T) {
 	m := mustNew(t)
 	res := drive(t, m, Prompt{}, Permission{})

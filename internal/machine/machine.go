@@ -1,7 +1,8 @@
 // Package machine is the agent state machine: which of idle, running,
-// waiting, or done a Claude session is in, driven by hook events.
+// waiting, or done a session is in, driven by hook events, focus changes and
+// screen checks.
 //
-// It is a pure fate statechart. The hook adapter restores a snapshot, sends
+// It is a pure fate statechart. The adapter restores a snapshot, sends
 // one event, persists the result, and performs every side effect itself, so
 // the machine stays deterministic and table-testable. The clock arrives inside
 // events for the same reason.
@@ -28,7 +29,30 @@ type Ctx struct {
 	Since int64 `json:"since"`
 	// Background is how many background tasks the last Stop reported.
 	Background int `json:"bg,omitempty"`
+	// Reason is why the agent is waiting; empty in every other state.
+	Reason string `json:"reason,omitempty"`
+	// Tool is the tool a permission was asked for.
+	Tool string `json:"tool,omitempty"`
+	// Source is what caused the last transition.
+	Source string `json:"src,omitempty"`
 }
+
+// Reasons an agent waits.
+const (
+	ReasonPermission  = "permission"
+	ReasonQuestion    = "question"
+	ReasonElicitation = "elicitation"
+	ReasonInput       = "input"
+	// ReasonDialog is a dialog found on screen: no hook said what it asks.
+	ReasonDialog = "dialog"
+)
+
+// Sources of a transition.
+const (
+	SourceHook   = "hook"
+	SourceScreen = "screen"
+	SourceFocus  = "focus"
+)
 
 // Event is anything the machine reacts to. EventName keeps fate off its
 // reflection fallback.
@@ -52,12 +76,18 @@ type ToolEnd struct {
 	Subagent bool
 }
 
-// Permission is a PermissionRequest, including AskUserQuestion prompts.
-type Permission struct{ At int64 }
+// Permission is a PermissionRequest. Reason tells a question the agent asks
+// from a tool it wants to run; Tool names that tool.
+type Permission struct {
+	At           int64
+	Reason, Tool string
+}
 
-// NeedsInput is a Notification asking for the user (permission_prompt,
-// elicitation dialogs).
-type NeedsInput struct{ At int64 }
+// NeedsInput is a Notification asking for the user.
+type NeedsInput struct {
+	At     int64
+	Reason string
+}
 
 // IdlePrompt is Claude's idle_prompt notification: the agent has sat at its
 // prompt for a while. It is the only end-of-turn signal after a turn Claude
@@ -159,6 +189,27 @@ func at(e Event) int64 {
 
 var enter = fate.Named("since", fate.Assign(func(c Ctx, e Event) Ctx {
 	c.Since = at(e)
+	c.Reason, c.Tool = "", ""
+	switch e.(type) {
+	case Screen:
+		c.Source = SourceScreen
+	case Focus:
+		c.Source = SourceFocus
+	default:
+		c.Source = SourceHook
+	}
+	return c
+}))
+
+var why = fate.Named("why", fate.Assign(func(c Ctx, e Event) Ctx {
+	switch e := e.(type) {
+	case Permission:
+		c.Reason, c.Tool = e.Reason, e.Tool
+	case NeedsInput:
+		c.Reason = e.Reason
+	case Screen:
+		c.Reason = ReasonDialog
+	}
 	return c
 }))
 
@@ -169,10 +220,17 @@ var recordBackground = fate.Named("bg", fate.Assign(func(c Ctx, e Event) Ctx {
 	return c
 }))
 
-func to(target string) tr { return tr{Target: target, Actions: []action{enter}} }
+func entering(target string) []action {
+	if target == Waiting {
+		return []action{enter, why}
+	}
+	return []action{enter}
+}
+
+func to(target string) tr { return tr{Target: target, Actions: entering(target)} }
 
 func when(target, name string, guard func(Ctx, Event) bool) tr {
-	return tr{Target: target, Guard: guard, GuardName: name, Actions: []action{enter}}
+	return tr{Target: target, Guard: guard, GuardName: name, Actions: entering(target)}
 }
 
 func screen(kind string) func(Ctx, Event) bool {

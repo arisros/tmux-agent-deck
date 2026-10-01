@@ -48,6 +48,13 @@ func Attach(rows []Row, sessions map[string]usage.Session) []Row {
 	return rows
 }
 
+// Why splits the reason a waiting agent carries into its cause and the tool
+// it concerns: "permission Bash" is permission for Bash.
+func (r Row) Why() (cause, tool string) {
+	cause, tool, _ = strings.Cut(r.Reason, " ")
+	return cause, tool
+}
+
 // Target is the tmux address shown for a row.
 func (r Row) Target() string { return r.Session + ":" + r.Window + "." + r.Index }
 

@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/arisros/tmux-agent-deck/internal/machine"
 )
@@ -21,6 +22,7 @@ type Payload struct {
 	Event            string          `json:"hook_event_name"`
 	SessionID        string          `json:"session_id"`
 	NotificationType string          `json:"notification_type"`
+	ToolName         string          `json:"tool_name"`
 	AgentID          string          `json:"agent_id"`
 	Source           string          `json:"source"`
 	BackgroundTasks  json.RawMessage `json:"background_tasks"`
@@ -65,18 +67,34 @@ func Map(p Payload, now int64) (Action, machine.Event) {
 	case "PostToolUse", "PostToolUseFailure":
 		return Send, machine.ToolEnd{At: now, Subagent: p.AgentID != ""}
 	case "PermissionRequest":
-		return Send, machine.Permission{At: now}
+		if p.ToolName == "AskUserQuestion" {
+			return Send, machine.Permission{At: now, Reason: machine.ReasonQuestion}
+		}
+		return Send, machine.Permission{At: now, Reason: machine.ReasonPermission, Tool: ToolClass(p.ToolName)}
 	case "Stop":
 		return Send, machine.Stop{At: now, Background: Count(p.BackgroundTasks)}
 	case "Notification":
 		switch p.NotificationType {
-		case "permission_prompt", "elicitation_dialog", "elicitation_url_dialog", "agent_needs_input":
-			return Send, machine.NeedsInput{At: now}
+		case "permission_prompt":
+			return Send, machine.NeedsInput{At: now, Reason: machine.ReasonPermission}
+		case "elicitation_dialog", "elicitation_url_dialog":
+			return Send, machine.NeedsInput{At: now, Reason: machine.ReasonElicitation}
+		case "agent_needs_input":
+			return Send, machine.NeedsInput{At: now, Reason: machine.ReasonInput}
 		case "idle_prompt":
 			return Send, machine.IdlePrompt{At: now}
 		}
 	}
 	return Ignore, nil
+}
+
+// ToolClass is the tool name the deck keeps. MCP tool names embed the server
+// name, which can identify internal systems, so they collapse to "mcp".
+func ToolClass(name string) string {
+	if strings.HasPrefix(name, "mcp__") {
+		return "mcp"
+	}
+	return name
 }
 
 // Count is the number of items in a list, object, or number field; 0 when it

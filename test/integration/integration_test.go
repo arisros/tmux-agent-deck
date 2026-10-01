@@ -48,6 +48,45 @@ func TestLifecycleAndFormats(t *testing.T) {
 	}
 }
 
+func TestReasonAndEventLog(t *testing.T) {
+	h := newHarness(t)
+	a := h.agent("alpha")
+	h.hook(a, "SessionStart", `,"source":"startup"`)
+	h.hook(a, "UserPromptSubmit", "")
+	h.hook(a, "PermissionRequest", `,"tool_name":"Bash","tool_input":{"command":"kubectl delete ns prod"}`)
+	if got := h.opt(a, "@deck_reason"); got != "permission Bash" {
+		t.Fatalf("reason = %q, want permission Bash", got)
+	}
+	if out := h.deck("", "list"); !strings.Contains(out, "waiting (permission Bash)") {
+		t.Errorf("list does not say why:\n%s", out)
+	}
+	h.hook(a, "PostToolUse", "")
+	if got := h.opt(a, "@deck_reason"); got != "" {
+		t.Errorf("reason = %q after the approval, want none", got)
+	}
+	h.hook(a, "PermissionRequest", `,"tool_name":"AskUserQuestion"`)
+	if got := h.opt(a, "@deck_reason"); got != "question" {
+		t.Errorf("reason = %q, want question", got)
+	}
+	h.hook(a, "SessionEnd", "")
+
+	out := h.deck("", "events", "--pane", a)
+	for _, want := range []string{
+		"idle -> idle", "idle -> running", "running -> waiting", "permission Bash",
+		"waiting -> running", "question", "End",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("events lack %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "kubectl") {
+		t.Errorf("a tool argument reached the event log:\n%s", out)
+	}
+	if lines := strings.Count(strings.TrimSpace(h.deck("", "events", "--pane", a, "--json")), "\n") + 1; lines != 6 {
+		t.Errorf("%d JSON events, want 6", lines)
+	}
+}
+
 func TestWindowIconPrefersMostUrgent(t *testing.T) {
 	h := newHarness(t)
 	a, b := h.agent("alpha"), h.agent("alpha")

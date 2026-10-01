@@ -441,11 +441,12 @@ func runList(args []string) error {
 	if *asJSON {
 		type item struct {
 			Pane, Target, State, Name, Path string
-			AgeSeconds                      int64 `json:"age_seconds"`
+			Reason                          string `json:"reason,omitempty"`
+			AgeSeconds                      int64  `json:"age_seconds"`
 		}
 		out := []item{}
 		for _, r := range rows {
-			out = append(out, item{r.ID, r.Target(), r.State, r.Name, r.Path, int64(r.Age.Seconds())})
+			out = append(out, item{r.ID, r.Target(), r.State, r.Name, r.Path, r.Reason, int64(r.Age.Seconds())})
 		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
@@ -456,7 +457,11 @@ func runList(args []string) error {
 	}
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	for _, r := range rows {
-		fmt.Fprintf(tw, "%s %s\t%s\t%s\t%s\t%s\n", ui.Styles[r.State].Glyph, r.State, ui.Age(r.Age), r.Target(), r.Name, r.Path)
+		state := r.State
+		if r.Reason != "" {
+			state += " (" + r.Reason + ")"
+		}
+		fmt.Fprintf(tw, "%s %s\t%s\t%s\t%s\t%s\n", ui.Styles[r.State].Glyph, state, ui.Age(r.Age), r.Target(), r.Name, r.Path)
 	}
 	return tw.Flush()
 }

@@ -119,9 +119,11 @@ type Pane struct {
 	ID, Session, SessionID, Window, WindowID, Index string
 	WindowName, Command, Title, Path                string
 	State, SID, Sidebar                             string
-	Since                                           int64
-	PaneActive, WindowActive, Attached              bool
-	WindowPanes                                     int
+	// Reason is why a waiting agent waits, "permission Bash" or "question".
+	Reason                             string
+	Since                              int64
+	PaneActive, WindowActive, Attached bool
+	WindowPanes                        int
 }
 
 var paneFields = []string{
@@ -129,6 +131,7 @@ var paneFields = []string{
 	"#{window_name}", "#{pane_current_command}", "#{pane_title}", "#{pane_current_path}",
 	"#{@deck_state}", "#{@deck_sid}", "#{@deck_sidebar}", "#{@deck_since}",
 	"#{pane_active}", "#{window_active}", "#{session_attached}", "#{window_panes}",
+	"#{@deck_reason}",
 }
 
 // sep must survive tmux's output escaping: tmux prints control characters
@@ -160,7 +163,7 @@ func ParsePanes(out string) []Pane {
 			WindowName: f[6], Command: f[7], Title: f[8], Path: f[9],
 			State: f[10], SID: f[11], Sidebar: f[12], Since: since,
 			PaneActive: f[14] == "1", WindowActive: f[15] == "1", Attached: attached > 0,
-			WindowPanes: windowPanes,
+			WindowPanes: windowPanes, Reason: f[18],
 		})
 	}
 	return panes

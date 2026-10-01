@@ -32,6 +32,7 @@ views:
   popup                                agents of every session, most urgent first; enter jumps, x kills
   sidebar toggle --session S --window W   this session's agents in a pane that follows you
   list [--json]                        print the agents and the plan usage
+  events [--pane P] [-n N] [--json]    print the log of state changes, oldest first
 
 setup:
   install --claude [--record] [--apply] [--settings FILE]
@@ -61,6 +62,7 @@ var commands = map[string]func(args []string) error{
 	"popup":     runPopup,
 	"sidebar":   runSidebar,
 	"list":      runList,
+	"events":    runEvents,
 	"tmux-init": runTmuxInit,
 	"install":   func(a []string) error { return runInstall(a, true) },
 	"uninstall": func(a []string) error { return runInstall(a, false) },

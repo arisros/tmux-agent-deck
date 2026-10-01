@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/arisros/tmux-agent-deck/internal/events"
 	"github.com/arisros/tmux-agent-deck/internal/hook"
 	"github.com/arisros/tmux-agent-deck/internal/machine"
 	"github.com/arisros/tmux-agent-deck/internal/store"
@@ -35,6 +36,8 @@ type Deck struct {
 	// Log, when set, records every state change a screen check makes: those
 	// are inferences, and a wrong one should leave a trace.
 	Log func(string)
+	// Emit, when set, receives every state change, for the event log.
+	Emit func(events.Event)
 }
 
 // New returns a Deck for the given tmux server and state directory.
@@ -71,6 +74,7 @@ func (d *Deck) Hook(p hook.Payload, pane string) error {
 		if err := l.Delete(); err != nil {
 			return err
 		}
+		d.emit(events.Event{SID: p.SessionID, Pane: pane, Kind: events.End, Source: machine.SourceHook})
 		if pane == "" {
 			return nil
 		}
@@ -89,6 +93,7 @@ func (d *Deck) Hook(p hook.Payload, pane string) error {
 		if err := l.Save(store.Record{Pane: pane, Snapshot: res.Snapshot}); err != nil {
 			return err
 		}
+		d.emitResult(events.Begin, p.SessionID, pane, res)
 		return d.publish(pane, p.SessionID, res, "")
 	}
 
@@ -102,6 +107,9 @@ func (d *Deck) Hook(p hook.Payload, pane string) error {
 	}
 	if err := l.Save(store.Record{Pane: pane, Snapshot: res.Snapshot}); err != nil {
 		return err
+	}
+	if res.From != res.To {
+		d.emitResult(ev.EventName(), p.SessionID, pane, res)
 	}
 	// Tool calls inside a running turn are the hot path and change nothing:
 	// no tmux round trip at all.
@@ -197,6 +205,7 @@ func (d *Deck) ReconcileStale(panes []tmux.Pane, minAge time.Duration) {
 func (d *Deck) Discover(panes []tmux.Pane) int {
 	now := strconv.FormatInt(d.Now().Unix(), 10)
 	var cmds [][]string
+	var found []events.Event
 	for _, p := range panes {
 		if p.State != "" || p.Sidebar != "" || !tmux.IsClaude(p.Command) {
 			continue
@@ -215,6 +224,7 @@ func (d *Deck) Discover(panes []tmux.Pane) int {
 		cmds = append(cmds,
 			[]string{"set-option", "-p", "-t", p.ID, "@deck_state", state},
 			[]string{"set-option", "-p", "-t", p.ID, "@deck_since", now})
+		found = append(found, events.Event{Pane: p.ID, Kind: events.Discover, To: state, Source: machine.SourceScreen})
 	}
 	if len(cmds) == 0 {
 		return 0
@@ -223,7 +233,10 @@ func (d *Deck) Discover(panes []tmux.Pane) int {
 	if err := d.Tmux.Batch(cmds); err != nil {
 		return 0
 	}
-	return (len(cmds) - 1) / 2
+	for _, e := range found {
+		d.emit(e)
+	}
+	return len(found)
 }
 
 func (d *Deck) send(pane, sid string, ev machine.Event) error {
@@ -249,7 +262,29 @@ func (d *Deck) send(pane, sid string, ev machine.Event) error {
 	if err := l.Save(store.Record{Pane: rec.Pane, Snapshot: res.Snapshot}); err != nil {
 		return err
 	}
+	d.emitResult(ev.EventName(), sid, pane, res)
 	return d.publish(pane, sid, res, "")
+}
+
+func (d *Deck) emitResult(kind, sid, pane string, res machine.Result) {
+	d.emit(events.Event{SID: sid, Pane: pane, Kind: kind, From: res.From, To: res.To,
+		Source: res.Ctx.Source, Reason: res.Ctx.Reason, Tool: res.Ctx.Tool})
+}
+
+func (d *Deck) emit(e events.Event) {
+	if d.Emit == nil {
+		return
+	}
+	e.TS = d.Now().UnixMilli()
+	d.Emit(e)
+}
+
+// reason is what @deck_reason shows: "permission Bash", "question".
+func reason(c machine.Ctx) string {
+	if c.Tool == "" {
+		return c.Reason
+	}
+	return c.Reason + " " + c.Tool
 }
 
 func (d *Deck) publish(pane, sid string, res machine.Result, sound string) error {
@@ -260,6 +295,11 @@ func (d *Deck) publish(pane, sid string, res machine.Result, sound string) error
 		{"set-option", "-p", "-t", pane, "@deck_state", res.To},
 		{"set-option", "-p", "-t", pane, "@deck_since", strconv.FormatInt(res.Ctx.Since, 10)},
 		{"set-option", "-p", "-t", pane, "@deck_sid", sid},
+	}
+	if why := reason(res.Ctx); why != "" {
+		cmds = append(cmds, []string{"set-option", "-p", "-t", pane, "@deck_reason", why})
+	} else {
+		cmds = append(cmds, []string{"set-option", "-p", "-u", "-t", pane, "@deck_reason"})
 	}
 	// tmux decides and plays in the same round trip: nothing is queried
 	// first, and the player runs detached from the hook.
@@ -281,6 +321,7 @@ func clear(pane string) [][]string {
 		{"set-option", "-p", "-u", "-t", pane, "@deck_state"},
 		{"set-option", "-p", "-u", "-t", pane, "@deck_since"},
 		{"set-option", "-p", "-u", "-t", pane, "@deck_sid"},
+		{"set-option", "-p", "-u", "-t", pane, "@deck_reason"},
 		{"wait-for", "-S", Signal},
 	}
 }
