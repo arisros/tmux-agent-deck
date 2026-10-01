@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.3](https://github.com/arisros/tmux-agent-deck/compare/v0.1.2...v0.1.3) (2026-10-01)
+
+
+### Fixed
+
+* **sidebar:** defer a pin that comes too soon instead of dropping it ([a53c637](https://github.com/arisros/tmux-agent-deck/commit/a53c6374862fefa7c5313734115c7f98614c5bb3))
+
 ## [0.1.2](https://github.com/arisros/tmux-agent-deck/compare/v0.1.1...v0.1.2) (2026-10-01)
 
 
