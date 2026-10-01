@@ -179,6 +179,45 @@ func TestSidebarCoexistsWithStickyPane(t *testing.T) {
 	}
 }
 
+// Following the sidebar back and forth must not shift width between the
+// other panes: each round trip used to move columns from the rightmost pane
+// to the leftmost one until the right ones were a few columns wide.
+func TestSidebarFollowKeepsPaneWidths(t *testing.T) {
+	h := newHarness(t)
+	a := h.agent("alpha")
+	h.hook(a, "UserPromptSubmit", "")
+	sess, w1 := h.opt("alpha", "session_id"), h.opt("alpha", "window_id")
+	w2 := h.tmux("new-window", "-d", "-t", "alpha", "-P", "-F", "#{window_id}", "sleep 100000")
+	h.tmux("split-window", "-d", "-h", "-t", w2, "sleep 100000")
+
+	h.deck("", "sidebar", "toggle", "--session", sess, "--window", w1)
+	sb := h.tmux("show-options", "-qv", "-t", "alpha", "@deck_sidebar_pane")
+	widths := func(w string) string {
+		return h.tmux("list-panes", "-t", w, "-F", "#{?#{==:#{pane_id},"+sb+"},sb,#{pane_width}}")
+	}
+	follow := func(w string) {
+		h.tmux("select-window", "-t", w)
+		h.eventually(func() bool {
+			return h.tmux("show-options", "-qv", "-t", "alpha", "@deck_sidebar_window") == w
+		}, "sidebar to follow to "+w)
+	}
+
+	follow(w2)
+	want2 := widths(w2)
+	follow(w1)
+	want1 := widths(w1)
+	for range 4 {
+		follow(w2)
+		if got := widths(w2); got != want2 {
+			t.Fatalf("%s widths drifted:\n got %q\nwant %q", w2, got, want2)
+		}
+		follow(w1)
+		if got := widths(w1); got != want1 {
+			t.Fatalf("%s widths drifted:\n got %q\nwant %q", w1, got, want1)
+		}
+	}
+}
+
 // An agent that was idle when the deck was installed has fired no hook, yet
 // must be listed.
 func TestAgentsWithoutHooksAreDiscovered(t *testing.T) {

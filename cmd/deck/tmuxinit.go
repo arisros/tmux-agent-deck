@@ -49,6 +49,39 @@ func windowIconFormat(running string) string {
 		`,#{?#{m:*running*,` + windowStates + `},` + running + `,}}}`
 }
 
+// sidebarFollowCommands moves the sidebar into the window the session now
+// shows. It is stored in @deck_follow and run with run-shell -C, which
+// expands it once in the new window before any command runs:
+// #{@deck_sidebar_window} is still the window being left, and ##-escaped
+// formats are expanded later, by set-option -F or the inner run-shell.
+//
+// tmux hands a leaving pane's columns to its neighbour but takes a joining
+// full-height pane's columns from the far edge, so plain joins shift width
+// from the rightmost pane to the leftmost one on every switch. Each window
+// keeps the layout it had with the sidebar (@deck_layout_with) and the one
+// the sidebar left behind (@deck_layout_left); the first is put back while
+// the window still has the second, so a resize or new pane in between wins.
+//
+// select-layout hands out cells in pane list order, and where join-pane -b
+// puts the pane in that list changed in tmux 3.7. The swap makes the sidebar
+// first on every version, and the layout applied after it puts every pane
+// back in its cell: the saved one, or the one the join just produced.
+const sidebarFollowCommands = `set-option -w -t #{window_id} @deck_restore ` +
+	`"#{&&:#{@deck_layout_with},#{==:#{window_layout},#{@deck_layout_left}}}" ; ` +
+	`set-option -w -F -t #{@deck_sidebar_pane} @deck_layout_with ` +
+	`"##{?##{==:##{pane_index},##{pane-base-index}},##{window_layout},}" ; ` +
+	`join-pane -d -f -h -b -l #{@deck-sidebar-width} -s #{@deck_sidebar_pane} -t #{window_id}.#{pane-base-index} ; ` +
+	`set-option -w -F -t #{window_id} @deck_layout_joined "##{window_layout}" ; ` +
+	`swap-pane -s #{@deck_sidebar_pane} -t #{window_id}.#{pane-base-index} ; ` +
+	`run-shell -t #{window_id} -C 'select-layout -t #{window_id} ` +
+	`"##{?##{@deck_restore},##{@deck_layout_with},##{@deck_layout_joined}}"' ; ` +
+	`set-option -t #{window_id} @deck_sidebar_window #{window_id} ; ` +
+	`set-option -w -F -t #{@deck_sidebar_window} @deck_layout_left "##{window_layout}"`
+
+// sidebarMisplaced is true, in a window's context, unless its sidebar is the
+// full-height left column. Edge flags, not heights: see sidebarPin.
+const sidebarMisplaced = `#{!=:#{P:#{?#{==:#{pane_id},#{@deck_sidebar_pane}},#{pane_at_left}#{pane_at_top}#{pane_at_bottom},}},111}`
+
 // hookIndex keeps the deck's tmux hooks in their own array slots, so a
 // user's plain `set-hook -g name` (slot 0) and re-runs of this command never
 // clobber or duplicate each other.
@@ -145,18 +178,19 @@ func runTmuxInit(_ []string) error {
 	// Leaving a busy agent is when a silent Esc or denial just happened there.
 	cmds = append(cmds, []string{"set-hook", "-g", "pane-focus-out" + hookIndex,
 		`if-shell -F "#{||:#{==:#{@deck_state},running},#{==:#{@deck_state},waiting}}" "run-shell -b '` + bin + ` reconcile #{pane_id}'"`})
-	// The sidebar follows window switches without starting deck: tmux checks
-	// whether it must move, and one shell runs the move. A window switch is
-	// the moment the user watches the sidebar, so this path stays short.
-	// #{q:} matters: a session id is "$3", which a shell would expand.
-	cmds = append(cmds, []string{"set-hook", "-g", "session-window-changed[78]",
-		`if-shell -F "#{&&:#{@deck_sidebar_pane},#{!=:#{@deck_sidebar_window},#{window_id}}}" ` +
-			`"run-shell -b 'tmux join-pane -d -f -h -b -l #{@deck-sidebar-width} -s #{@deck_sidebar_pane} -t #{window_id} ` +
-			`&& tmux set-option -t #{q:session_id} @deck_sidebar_window #{window_id}'"`})
+	// The sidebar follows window switches entirely inside tmux: run-shell -C
+	// expands the formats and runs the result as one tmux command list, so a
+	// switch starts no process, and the join and the layout restore land in
+	// the same redraw. See sidebarFollowCommands.
+	cmds = append(cmds,
+		[]string{"set-option", "-g", "@deck_follow", sidebarFollowCommands},
+		[]string{"set-hook", "-g", "session-window-changed[78]",
+			`if-shell -F "#{&&:#{@deck_sidebar_pane},#{!=:#{@deck_sidebar_window},#{window_id}}}" ` +
+				`{ run-shell -C "#{E:@deck_follow}" }`})
 	// Swaps, rotations and layout changes move the sidebar like any pane;
-	// it pins itself back. The condition runs in tmux, so only a change in
-	// the sidebar's own window starts anything.
-	pin := `if-shell -F "#{&&:#{@deck_sidebar_pane},#{==:#{@deck_sidebar_window},#{window_id}}}" ` +
+	// it pins itself back. The condition runs in tmux, so only a misplaced
+	// sidebar in its own window starts anything.
+	pin := `if-shell -F "#{&&:#{@deck_sidebar_pane},#{&&:#{==:#{@deck_sidebar_window},#{window_id}},` + sidebarMisplaced + `}}" ` +
 		`"run-shell -b '` + bin + ` sidebar pin --session #{q:session_id}'"`
 	// window-layout-changed covers them all: tmux has no after- hook for
 	// swap-pane, rotate-window or join-pane. The pin itself changes the

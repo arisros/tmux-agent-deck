@@ -414,13 +414,14 @@ func leaveEmptyWindow(c tmux.Client, session, self string) (bool, error) {
 	if target == "" {
 		return false, nil
 	}
-	if _, err := c.Run("join-pane", "-d", "-f", "-h", "-b", "-l", sidebarWidth(c), "-s", self, "-t", target); err != nil {
-		return false, err
+	// The last step records the layout of the window left behind, which
+	// closes as soon as the sidebar is gone: judge by where the sidebar is.
+	_, _ = c.Run("run-shell", "-t", target, "-C", "#{E:@deck_follow}")
+	if out, err := c.Run("display-message", "-p", "-t", self, "#{window_id}"); err != nil || strings.TrimSpace(out) != target {
+		return false, fmt.Errorf("sidebar did not move to %s", target)
 	}
-	return true, c.Batch([][]string{
-		{"set-option", "-t", session, "@deck_sidebar_window", target},
-		{"select-window", "-t", target},
-	})
+	_, err = c.Run("select-window", "-t", target)
+	return true, err
 }
 
 func runList(args []string) error {
