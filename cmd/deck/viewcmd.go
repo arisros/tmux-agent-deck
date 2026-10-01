@@ -503,18 +503,33 @@ func logFailure(view string, err *error) {
 // swap, rotation or layout change moved it: tmux cannot exempt a pane from
 // those, so the sidebar returns to its place once they are done.
 func sidebarPin(c tmux.Client, session string) error {
+	wait, err := pinOnce(c, session)
+	if err != nil || wait <= 0 {
+		return err
+	}
+	// Too soon after the last pin. Dropping it left the sidebar misplaced
+	// until some later layout change; wait out the interval and look again.
+	// The second look never waits, so this cannot loop.
+	time.Sleep(wait)
+	_, err = pinOnce(c, session)
+	return err
+}
+
+// pinOnce pins the sidebar if it is misplaced. It returns how long to wait
+// when the last pin was too recent to pin again now.
+func pinOnce(c tmux.Client, session string) (time.Duration, error) {
 	// The layout hook and the sidebar's own resize handler fire together.
 	// Without a lock both see a misplaced sidebar and both move it, and each
 	// move is a new layout change. Under the lock, the second caller finds
 	// the sidebar already in place.
 	unlock, err := lockFile(filepath.Join(store.Root(), "pin.lock"))
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer unlock()
 	p := sidebarPane(c, session)
 	if p == "" {
-		return nil
+		return 0, nil
 	}
 	// Edge flags, not heights: with pane-border-status on, a full-height
 	// pane is shorter than its window, and comparing heights made every
@@ -522,37 +537,42 @@ func sidebarPin(c tmux.Client, session string) error {
 	out, err := c.Run("display-message", "-p", "-t", p,
 		"#{window_id} #{pane_at_left} #{pane_at_top} #{pane_at_bottom} #{@deck_pinned_at}")
 	if err != nil {
-		return err
+		return 0, err
 	}
 	f := strings.Fields(out)
 	if len(f) < 4 || (f[1] == "1" && f[2] == "1" && f[3] == "1") {
-		return nil // already the full-height left column
+		return 0, nil // already the full-height left column
 	}
 	// Whatever else goes wrong, never pin more than once per interval: a
 	// pin changes the layout, and the layout hook must not be able to spin.
-	now := time.Now().Unix()
+	now := time.Now().UnixMilli()
 	if len(f) == 5 {
-		if last, err := strconv.ParseInt(f[4], 10, 64); err == nil && now-last < pinInterval {
-			return nil
+		if last, err := strconv.ParseInt(f[4], 10, 64); err == nil {
+			if last < 1e12 { // written in seconds by an older build
+				last *= 1000
+			}
+			if elapsed := time.Duration(now-last) * time.Millisecond; elapsed < pinInterval {
+				return pinInterval - elapsed, nil
+			}
 		}
 	}
 	window := f[0]
 	if _, err := c.Run("set-option", "-p", "-t", p, "@deck_pinned_at", strconv.FormatInt(now, 10)); err != nil {
-		return err
+		return 0, err
 	}
 	logView("pin "+p+" back to the left of "+window, nil)
 	// break-pane, then join-pane back: the only way to make a pane the full-
 	// height left column of its own window again. The sidebar process keeps
 	// running across both.
 	if _, err := c.Run("break-pane", "-d", "-s", p); err != nil {
-		return err
+		return 0, err
 	}
 	join := [][]string{
 		{"join-pane", "-d", "-f", "-h", "-b", "-l", sidebarWidth(c), "-s", p, "-t", window},
 		{"set-option", "-t", session, "@deck_sidebar_window", window},
 	}
 	if err := c.Batch(join); err == nil {
-		return nil
+		return 0, nil
 	}
 	if err := c.Batch(join); err != nil {
 		// The sidebar now sits alone in the window break-pane made. Record
@@ -560,13 +580,13 @@ func sidebarPin(c tmux.Client, session string) error {
 		out, _ := c.Run("display-message", "-p", "-t", p, "#{window_id}")
 		_, _ = c.Run("set-option", "-t", session, "@deck_sidebar_window", strings.TrimSpace(out))
 		logView("pin "+p+" failed to rejoin "+window+": "+err.Error(), nil)
-		return err
+		return 0, err
 	}
-	return nil
+	return 0, nil
 }
 
-// pinInterval is the least time between two pins of one sidebar, in seconds.
-const pinInterval = 2
+// pinInterval is the least time between two pins of one sidebar.
+const pinInterval = 2 * time.Second
 
 // lockFile takes an exclusive lock on path, waiting for it if needed.
 func lockFile(path string) (func(), error) {
