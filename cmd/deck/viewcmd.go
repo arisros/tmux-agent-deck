@@ -414,55 +414,14 @@ func leaveEmptyWindow(c tmux.Client, session, self string) (bool, error) {
 	if target == "" {
 		return false, nil
 	}
-	if err := moveSidebar(c, session, self, target); err != nil {
-		return false, err
+	// The last step records the layout of the window left behind, which
+	// closes as soon as the sidebar is gone: judge by where the sidebar is.
+	_, _ = c.Run("run-shell", "-t", target, "-C", "#{E:@deck_follow}")
+	if out, err := c.Run("display-message", "-p", "-t", self, "#{window_id}"); err != nil || strings.TrimSpace(out) != target {
+		return false, fmt.Errorf("sidebar did not move to %s", target)
 	}
 	_, err = c.Run("select-window", "-t", target)
 	return true, err
-}
-
-// moveSidebar joins the sidebar into window the way the follow hook does,
-// keeping both windows' layouts: see sidebarFollowCommands.
-func moveSidebar(c tmux.Client, session, p, window string) error {
-	out, err := c.Run("display-message", "-p", "-t", p, "#{window_id}\t#{window_layout}\t#{P:#{pane_id} }")
-	if err != nil {
-		return err
-	}
-	src := strings.Split(strings.TrimRight(out, "\n"), "\t")
-	if len(src) != 3 || src[0] == window {
-		return nil
-	}
-	from, with := src[0], src[1]
-	if first, _, _ := strings.Cut(src[2], " "); first != p {
-		with = ""
-	}
-	out, err = c.Run("display-message", "-p", "-t", window,
-		"#{window_layout}\t#{@deck_layout_left}\t#{@deck_layout_with}\t#{P:#{pane_id} }")
-	if err != nil {
-		return err
-	}
-	dst := strings.Split(strings.TrimRight(out, "\n"), "\t")
-	if len(dst) != 4 {
-		return fmt.Errorf("unexpected window info for %s: %q", window, out)
-	}
-	first, _, _ := strings.Cut(dst[3], " ")
-	if _, err := c.Run("join-pane", "-d", "-f", "-h", "-b", "-l", sidebarWidth(c), "-s", p, "-t", first); err != nil {
-		return err
-	}
-	if dst[1] != "" && dst[0] == dst[1] && dst[2] != "" {
-		if _, err := c.Run("select-layout", "-t", window, dst[2]); err != nil {
-			logView("restore layout of "+window+": "+err.Error(), nil)
-		}
-	}
-	if _, err := c.Run("set-option", "-t", session, "@deck_sidebar_window", window); err != nil {
-		return err
-	}
-	// The window just left is gone when the sidebar was its last pane.
-	_ = c.Batch([][]string{
-		{"set-option", "-w", "-t", from, "@deck_layout_with", with},
-		{"set-option", "-w", "-F", "-t", from, "@deck_layout_left", "#{window_layout}"},
-	})
-	return nil
 }
 
 func runList(args []string) error {
