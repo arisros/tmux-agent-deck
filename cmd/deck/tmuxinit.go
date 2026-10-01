@@ -49,23 +49,8 @@ func windowIconFormat(running string) string {
 		`,#{?#{m:*running*,` + windowStates + `},` + running + `,}}}`
 }
 
-// sidebarFollowCommands moves the sidebar into the window the session now
-// shows. It is stored in @deck_follow and run with run-shell -C, which
-// expands it once in the new window before any command runs:
-// #{@deck_sidebar_window} is still the window being left, and ##-escaped
-// formats are expanded later, by set-option -F or the inner run-shell.
-//
-// tmux hands a leaving pane's columns to its neighbour but takes a joining
-// full-height pane's columns from the far edge, so plain joins shift width
-// from the rightmost pane to the leftmost one on every switch. Each window
-// keeps the layout it had with the sidebar (@deck_layout_with) and the one
-// the sidebar left behind (@deck_layout_left); the first is put back while
-// the window still has the second, so a resize or new pane in between wins.
-//
-// select-layout hands out cells in pane list order, and where join-pane -b
-// puts the pane in that list changed in tmux 3.7. The swap makes the sidebar
-// first on every version, and the layout applied after it puts every pane
-// back in its cell: the saved one, or the one the join just produced.
+// sidebarFollowCommands joins the sidebar and restores the window's saved layout, which plain
+// joins drift. The swap fixes pane list order, which tmux 3.7 changed for join-pane -b.
 const sidebarFollowCommands = `set-option -w -t #{window_id} @deck_restore ` +
 	`"#{&&:#{@deck_layout_with},#{==:#{window_layout},#{@deck_layout_left}}}" ; ` +
 	`set-option -w -F -t #{@deck_sidebar_pane} @deck_layout_with ` +
@@ -178,10 +163,7 @@ func runTmuxInit(_ []string) error {
 	// Leaving a busy agent is when a silent Esc or denial just happened there.
 	cmds = append(cmds, []string{"set-hook", "-g", "pane-focus-out" + hookIndex,
 		`if-shell -F "#{||:#{==:#{@deck_state},running},#{==:#{@deck_state},waiting}}" "run-shell -b '` + bin + ` reconcile #{pane_id}'"`})
-	// The sidebar follows window switches entirely inside tmux: run-shell -C
-	// expands the formats and runs the result as one tmux command list, so a
-	// switch starts no process, and the join and the layout restore land in
-	// the same redraw. See sidebarFollowCommands.
+	// Runs inside tmux, no process per switch. See sidebarFollowCommands.
 	cmds = append(cmds,
 		[]string{"set-option", "-g", "@deck_follow", sidebarFollowCommands},
 		[]string{"set-hook", "-g", "session-window-changed[78]",

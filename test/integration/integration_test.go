@@ -179,9 +179,7 @@ func TestSidebarCoexistsWithStickyPane(t *testing.T) {
 	}
 }
 
-// Following the sidebar back and forth must not shift width between the
-// other panes: each round trip used to move columns from the rightmost pane
-// to the leftmost one until the right ones were a few columns wide.
+// Following the sidebar back and forth must not shift width between the other panes.
 func TestSidebarFollowKeepsPaneWidths(t *testing.T) {
 	h := newHarness(t)
 	a := h.agent("alpha")
