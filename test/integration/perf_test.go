@@ -85,16 +85,30 @@ func TestPerformanceAtScale(t *testing.T) {
 		views = append(views, time.Since(start))
 	}
 
-	report := func(name string, d []time.Duration, limit time.Duration) {
+	// The median is stable anywhere; the p95 tail jumps with neighbouring
+	// load on shared CI runners. Locally both are enforced. CI sets
+	// DECK_PERF_TAIL=off and scales the medians with DECK_PERF_SLACK, which
+	// still catches a real regression: one slow hook moves every sample.
+	tail := os.Getenv("DECK_PERF_TAIL") != "off"
+	slack := 1.0
+	if v, err := strconv.ParseFloat(os.Getenv("DECK_PERF_SLACK"), 64); err == nil && v > 0 {
+		slack = v
+	}
+	report := func(name string, d []time.Duration, p50Limit, p95Limit time.Duration) {
 		p50, p95 := percentile(d, 0.5), percentile(d, 0.95)
-		t.Logf("%-28s n=%-4d p50=%-8s p95=%-8s budget p95<%s", name, len(d), p50.Round(100*time.Microsecond), p95.Round(100*time.Microsecond), limit)
-		if p95 > limit {
-			t.Errorf("%s p95 %s over budget %s", name, p95, limit)
+		p50Limit = time.Duration(float64(p50Limit) * slack)
+		t.Logf("%-28s n=%-4d p50=%-8s p95=%-8s budget p50<%s p95<%s", name, len(d),
+			p50.Round(100*time.Microsecond), p95.Round(100*time.Microsecond), p50Limit, p95Limit)
+		if p50 > p50Limit {
+			t.Errorf("%s p50 %s over budget %s", name, p50, p50Limit)
+		}
+		if tail && p95 > p95Limit {
+			t.Errorf("%s p95 %s over budget %s", name, p95, p95Limit)
 		}
 	}
-	report("hook, no state change", hot, budget("DECK_PERF_HOOK_MS", 15))
-	report("hook, state change", edges, budget("DECK_PERF_EDGE_MS", 25))
-	report("list (view refresh)", views, budget("DECK_PERF_VIEW_MS", 80))
+	report("hook, no state change", hot, 8*time.Millisecond, budget("DECK_PERF_HOOK_MS", 15))
+	report("hook, state change", edges, 18*time.Millisecond, budget("DECK_PERF_EDGE_MS", 25))
+	report("list (view refresh)", views, 40*time.Millisecond, budget("DECK_PERF_VIEW_MS", 80))
 
 	// Nothing may keep running between events: no daemon, no ticker.
 	if out, _ := exec.Command("pgrep", "-f", h.bin).Output(); len(strings.TrimSpace(string(out))) > 0 {
