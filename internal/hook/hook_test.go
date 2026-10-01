@@ -25,6 +25,7 @@ func TestMap(t *testing.T) {
 		{`{"hook_event_name":"PermissionRequest","tool_name":"AskUserQuestion"}`, Send, machine.Permission{At: 7, Reason: machine.ReasonQuestion}},
 		{`{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"rm -rf /"}}`, Send, machine.Permission{At: 7, Reason: machine.ReasonPermission, Tool: "Bash"}},
 		{`{"hook_event_name":"PermissionRequest","tool_name":"mcp__internal-crm__lookup"}`, Send, machine.Permission{At: 7, Reason: machine.ReasonPermission, Tool: "mcp"}},
+		{`{"hook_event_name":"PermissionRequest","tool_name":"Bash' ; run-shell 'x"}`, Send, machine.Permission{At: 7, Reason: machine.ReasonPermission, Tool: "Bashrun-shellx"}},
 		{`{"hook_event_name":"PermissionRequest"}`, Send, machine.Permission{At: 7, Reason: machine.ReasonPermission}},
 		{`{"hook_event_name":"Notification","notification_type":"permission_prompt"}`, Send, machine.NeedsInput{At: 7, Reason: machine.ReasonPermission}},
 		{`{"hook_event_name":"Notification","notification_type":"elicitation_dialog"}`, Send, machine.NeedsInput{At: 7, Reason: machine.ReasonElicitation}},

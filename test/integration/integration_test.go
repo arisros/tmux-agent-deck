@@ -87,6 +87,23 @@ func TestReasonAndEventLog(t *testing.T) {
 	}
 }
 
+func TestNotifyCommand(t *testing.T) {
+	h := newHarness(t)
+	out := filepath.Join(t.TempDir(), "notified")
+	script := filepath.Join(t.TempDir(), "notify.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho \"$@\" >> "+out+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	h.tmux("set-option", "-g", "@deck-notify-command", script)
+	a := h.agent("alpha")
+	h.hook(a, "UserPromptSubmit", "")
+	h.hook(a, "PermissionRequest", `,"tool_name":"Bash"`)
+	h.hook(a, "PostToolUse", "")
+	h.hook(a, "Stop", "")
+	want := "waiting " + a + " permission Bash\ndone " + a + "\n"
+	h.eventually(func() bool { b, _ := os.ReadFile(out); return string(b) == want }, "the notify command to run twice")
+}
+
 func TestWindowIconPrefersMostUrgent(t *testing.T) {
 	h := newHarness(t)
 	a, b := h.agent("alpha"), h.agent("alpha")

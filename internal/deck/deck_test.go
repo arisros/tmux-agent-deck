@@ -437,6 +437,27 @@ func TestSweepForgetsExitedAgents(t *testing.T) {
 	}
 }
 
+func TestNotifyCommandGetsStatePaneAndReason(t *testing.T) {
+	f := newFake()
+	d := newDeck(t, f)
+	send(t, d, "%7", ev("UserPromptSubmit", ""))
+	send(t, d, "%7", ev("PermissionRequest", `,"tool_name":"Bash"`))
+	send(t, d, "%7", ev("PostToolUse", ""))
+	send(t, d, "%7", ev("Stop", ""))
+	got := f.sounds()
+	if len(got) != 2 {
+		t.Fatalf("%d alerts, want one for waiting and one for done: %q", len(got), got)
+	}
+	for i, want := range []string{
+		`run-shell -b '#{@deck-notify-command} waiting %7 permission Bash'`,
+		`run-shell -b '#{@deck-notify-command} done %7'`,
+	} {
+		if !strings.Contains(got[i], want) || !strings.Contains(got[i], `if-shell -F "#{@deck-notify-command}"`) {
+			t.Errorf("alert %d = %q, want it to run %q when the option is set", i, got[i], want)
+		}
+	}
+}
+
 func TestReasonIsPublishedAndCleared(t *testing.T) {
 	f := newFake()
 	d := newDeck(t, f)

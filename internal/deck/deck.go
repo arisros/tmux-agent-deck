@@ -319,6 +319,18 @@ func (d *Deck) emit(e events.Event) {
 	d.Emit(e)
 }
 
+// shellWords keeps the characters a reason is made of, so nothing a hook
+// payload carried can end the quoting it is placed in.
+func shellWords(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == ' ', r == '_', r == '-', r == '.':
+			return r
+		}
+		return -1
+	}, s)
+}
+
 // reason is what @deck_reason shows: "permission Bash", "question".
 func reason(c machine.Ctx) string {
 	if c.Tool == "" {
@@ -343,8 +355,12 @@ func (d *Deck) publish(pane, sid string, res machine.Result, sound string) error
 		cmds = append(cmds, []string{"set-option", "-p", "-u", "-t", pane, "@deck_reason"})
 	}
 	// tmux decides and plays in the same round trip: nothing is queried
-	// first, and the player runs detached from the hook.
-	play := `if-shell -F "#{!=:#{@deck-sound},off}" "run-shell -b '#{@deck-sound-command} #{@deck-sound-` + sound + `}'"`
+	// first, and the player runs detached from the hook. The user's notify
+	// command follows the same path, with the state, the pane and the reason
+	// as arguments; a pane title or a prompt never reaches a shell here.
+	play := `if-shell -F "#{!=:#{@deck-sound},off}" "run-shell -b '#{@deck-sound-command} #{@deck-sound-` + sound + `}'" ; ` +
+		`if-shell -F "#{@deck-notify-command}" "run-shell -b '#{@deck-notify-command} ` +
+		strings.TrimSpace(sound+" "+pane+" "+shellWords(reason(res.Ctx))) + `'"`
 	switch {
 	case sound == "done":
 		// A turn the user watched end is idle and silent.

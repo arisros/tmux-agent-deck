@@ -90,9 +90,22 @@ func Map(p Payload, now int64) (Action, machine.Event) {
 
 // ToolClass is the tool name the deck keeps. MCP tool names embed the server
 // name, which can identify internal systems, so they collapse to "mcp".
+//
+// What is left is cut to the characters a tool name is made of: it is shown,
+// logged and handed to tmux, and must not be able to end a command there.
 func ToolClass(name string) string {
 	if strings.HasPrefix(name, "mcp__") {
 		return "mcp"
+	}
+	name = strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '-', r == '.':
+			return r
+		}
+		return -1
+	}, name)
+	if len(name) > 32 {
+		name = name[:32]
 	}
 	return name
 }

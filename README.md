@@ -168,6 +168,27 @@ Set them before tpm loads the plugin.
 | `@deck-sound-command` | `afplay` (macOS), `paplay` (Linux) | player |
 | `@deck-sound-waiting` | Ping.aiff, bell.oga | |
 | `@deck-sound-done` | Funk.aiff, complete.oga | |
+| `@deck-notify-command` | unset | a command run when an agent starts waiting or finishes, for panes you are not watching. It gets the state, the pane id and the reason: `waiting %12 permission Bash`, `done %12` |
+
+### Notifications
+
+The notify command runs inside tmux, next to the sound, so it costs no extra process until it fires. Only the state, the pane id and the reason are passed; ask tmux for anything else.
+
+```sh
+#!/bin/sh
+# ~/.config/tmux/deck-notify.sh: $1 state, $2 pane, $3 and $4 the reason
+where=$(tmux display-message -p -t "$2" '#{session_name}:#{window_index} #{pane_title}')
+case "$(uname)" in
+Darwin) osascript -e 'on run argv' -e 'display notification (item 2 of argv) with title (item 1 of argv)' -e 'end run' "agent $1 $3 $4" "$where" ;;
+*) notify-send "agent $1 $3 $4" "$where" ;;
+esac
+```
+
+```tmux
+set -g @deck-notify-command '~/.config/tmux/deck-notify.sh'
+```
+
+Anything that takes arguments works the same way: a webhook with `curl`, a chat message, a log line.
 
 ## Troubleshooting
 
