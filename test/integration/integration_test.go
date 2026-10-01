@@ -620,6 +620,69 @@ func TestCodexInstallMergesAndRestores(t *testing.T) {
 	}
 }
 
+// cat stands in for an agent's input box: what the deck types shows up on
+// its screen, and nothing runs it.
+func TestSendAndInterruptReachOnlyALiveAgent(t *testing.T) {
+	h := newHarness(t)
+	a := h.tmux("split-window", "-d", "-t", "alpha", "-P", "-F", "#{pane_id}", "cat")
+	h.eventually(func() bool { return h.opt(a, "pane_current_command") == "cat" }, "stand-in running")
+	h.hook(a, "UserPromptSubmit", "")
+
+	// Text that would be a second tmux command, or a shell command, if any
+	// layer parsed it.
+	text := `use Postgres; kill-server ; $(touch /tmp/deck-should-not-exist) 'q' "q" #{pane_id}`
+	h.deck("", "send", a, text)
+	h.eventually(func() bool { return strings.Contains(h.tmux("capture-pane", "-p", "-J", "-t", a), text) }, "the text to reach the agent verbatim")
+	// cat echoes a submitted line back: the text appears twice once Enter landed.
+	h.eventually(func() bool {
+		return strings.Count(h.tmux("capture-pane", "-p", "-J", "-t", a), "use Postgres") == 2
+	}, "the prompt to be submitted")
+	h.deck("from stdin\n", "send", "--no-enter", a)
+	h.eventually(func() bool { return strings.Count(h.tmux("capture-pane", "-p", "-J", "-t", a), "from stdin") == 1 }, "unsubmitted text from stdin")
+	if buffers := h.tmux("list-buffers"); strings.Contains(buffers, "deck-send") {
+		t.Errorf("a send buffer was left behind: %s", buffers)
+	}
+
+	// The agent exits and the pane becomes something else: nothing is typed.
+	h.tmux("respawn-pane", "-k", "-t", a, "sh -c 'cat > /dev/null'")
+	h.eventually(func() bool { return h.opt(a, "pane_current_command") != "cat" }, "agent replaced")
+	for _, args := range [][]string{{"send", a, "rm -rf /"}, {"interrupt", a}} {
+		cmd := exec.Command(h.bin, args...)
+		cmd.Env = h.env("")
+		if out, err := cmd.CombinedOutput(); err == nil || !strings.Contains(string(out), "runs no agent") {
+			t.Errorf("deck %v on a dead agent: %v %s", args, err, out)
+		}
+	}
+	if screen := h.tmux("capture-pane", "-p", "-t", a); strings.Contains(screen, "rm -rf") {
+		t.Errorf("text reached a pane whose agent exited:\n%s", screen)
+	}
+	if buffers := h.tmux("list-buffers"); strings.Contains(buffers, "deck-send") {
+		t.Errorf("a refused send left its buffer behind: %s", buffers)
+	}
+
+	// Interrupt presses Esc in a live agent: cat -v shows it as ^[.
+	b := h.tmux("split-window", "-d", "-t", "alpha", "-P", "-F", "#{pane_id}", "cat -v")
+	h.eventually(func() bool { return h.opt(b, "pane_current_command") == "cat" }, "second stand-in running")
+	h.hook(b, "UserPromptSubmit", "")
+	h.deck("", "interrupt", b)
+	h.eventually(func() bool { return strings.Contains(h.tmux("capture-pane", "-p", "-t", b), "^[") }, "Esc to reach the agent")
+}
+
+func TestPopupPreviewsTheSelectedAgent(t *testing.T) {
+	h := newHarness(t)
+	a := h.tmux("split-window", "-d", "-t", "alpha", "-P", "-F", "#{pane_id}",
+		`printf 'Do you want to proceed?\n  1. Yes\n  2. No\n'; exec `+h.fake)
+	h.eventually(func() bool { return h.opt(a, "pane_current_command") == "2.1.999" }, "fake claude")
+	h.hook(a, "UserPromptSubmit", "")
+	h.hook(a, "PermissionRequest", `,"tool_name":"Bash"`)
+	h.tmux("set-environment", "-g", "DECK_TMUX_SOCKET", h.socket)
+	popup := h.tmux("new-window", "-d", "-P", "-F", "#{pane_id}", h.bin+" popup")
+	h.eventually(func() bool {
+		screen := h.tmux("capture-pane", "-p", "-t", popup)
+		return strings.Contains(screen, "permission Bash ──") && strings.Contains(screen, "Do you want to proceed?")
+	}, "the popup to show the waiting agent's dialog")
+}
+
 func TestDoctorReportsAHealthySetup(t *testing.T) {
 	h := newHarness(t)
 	claude := t.TempDir()

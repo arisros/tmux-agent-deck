@@ -367,3 +367,113 @@ func TestWaitingRowSaysWhy(t *testing.T) {
 		t.Errorf("filtering by reason kept %v", v)
 	}
 }
+
+func typeKeys(l *List, s string) Outcome {
+	var o Outcome
+	for _, r := range s {
+		o = l.Handle(Key{Rune: r})
+	}
+	return o
+}
+
+func TestPopupShowsTheSelectedAgentsScreen(t *testing.T) {
+	ask := pane("%1", "a", "1", "waiting", "2.1.284", "✳ deploy", 0)
+	ask.Reason = "permission Bash"
+	l := &List{All: Agents([]tmux.Pane{ask, pane("%2", "a", "2", "running", "2.1.284", "✳ other", 0)}, now)}
+	l.SetPreview("%1", "Bash command\n  rm -rf build\nDo you want to proceed?\n❯ 1. Yes\n  2. No\n\n\n")
+
+	lines := Popup(l, 100, 30)
+	if len(lines) != 30 {
+		t.Fatalf("rendered %d lines for a 30-line screen", len(lines))
+	}
+	view := strings.Join(lines, "\n")
+	for _, want := range []string{"── deploy · permission Bash ──", "rm -rf build", "❯ 1. Yes"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("popup lacks %q:\n%s", want, view)
+		}
+	}
+	for _, line := range lines {
+		if Width(line) > 100 {
+			t.Errorf("line is %d cells wide: %q", Width(line), line)
+		}
+	}
+	// Moving the cursor away hides a screen that is no longer the selected one.
+	l.Handle(Key{Rune: 'j'})
+	if view := strings.Join(Popup(l, 100, 30), "\n"); strings.Contains(view, "rm -rf build") {
+		t.Errorf("the previous agent's screen is still shown:\n%s", view)
+	}
+	// A short popup keeps the list and drops the screen.
+	if view := strings.Join(Popup(l, 100, 10), "\n"); strings.Contains(view, "──  ") || len(Popup(l, 100, 10)) != 10 {
+		t.Errorf("short popup:\n%s", view)
+	}
+}
+
+func TestAnswerOnlyAWaitingAgentWhoseScreenIsShown(t *testing.T) {
+	ask := pane("%1", "a", "1", "waiting", "2.1.284", "✳ deploy", 0)
+	busy := pane("%2", "a", "2", "running", "2.1.284", "✳ other", 0)
+	l := &List{All: Agents([]tmux.Pane{ask, busy}, now)}
+	if o := l.Handle(Key{Rune: '1'}); o != Stay {
+		t.Errorf("answered a dialog nobody can read: %v", o)
+	}
+	l.SetPreview("%1", "Do you want to proceed?")
+	if o := l.Handle(Key{Rune: '2'}); o != Answer || l.Reply != "2" {
+		t.Errorf("got %v %q, want Answer 2", o, l.Reply)
+	}
+	l.Handle(Key{Rune: 'j'})
+	l.SetPreview("%2", "working")
+	if o := l.Handle(Key{Rune: '1'}); o != Stay {
+		t.Errorf("answered an agent that is not waiting: %v", o)
+	}
+}
+
+func TestComposeSendsOnEnterAndEscDrops(t *testing.T) {
+	l := &List{All: Agents([]tmux.Pane{pane("%1", "a", "1", "idle", "2.1.284", "✳ api", 0)}, now)}
+	l.Handle(Key{Rune: 'p'})
+	// Keys that are commands elsewhere are text here.
+	typeKeys(l, "quit x 1/")
+	if foot := Popup(l, 80, 10)[9]; !strings.Contains(foot, "to api > ") || !strings.Contains(foot, "quit x 1/▏") {
+		t.Errorf("footer does not show the draft: %q", Popup(l, 80, 10)[9])
+	}
+	l.Handle(Key{Name: "backspace"})
+	if o := l.Handle(Key{Name: "enter"}); o != Send || l.Reply != "quit x 1" || l.Composing || l.Draft != "" {
+		t.Errorf("got %v reply %q composing %v", o, l.Reply, l.Composing)
+	}
+	l.Handle(Key{Rune: 'p'})
+	typeKeys(l, "never mind")
+	if o := l.Handle(Key{Name: "esc"}); o != Stay || l.Composing || l.Draft != "" {
+		t.Errorf("esc did not drop the draft: %v %q", o, l.Draft)
+	}
+	l.Handle(Key{Rune: 'p'})
+	if o := l.Handle(Key{Name: "enter"}); o != Stay {
+		t.Errorf("an empty draft was sent: %v", o)
+	}
+}
+
+func TestInterruptNeedsConfirmationAndSeenNeedsDone(t *testing.T) {
+	l := &List{All: Agents([]tmux.Pane{
+		pane("%1", "a", "1", "done", "2.1.284", "✳ finished", 0),
+		pane("%2", "a", "2", "running", "2.1.284", "✳ busy", 0),
+		pane("%3", "a", "3", "idle", "2.1.284", "✳ quiet", 0),
+	}, now)}
+	if o := l.Handle(Key{Rune: 'i'}); o != Stay || l.Confirming {
+		t.Error("a finished agent has nothing to interrupt")
+	}
+	if o := l.Handle(Key{Rune: 's'}); o != Seen {
+		t.Errorf("s on a done agent = %v, want Seen", o)
+	}
+	l.Handle(Key{Rune: 'j'})
+	if o := l.Handle(Key{Rune: 's'}); o != Stay {
+		t.Errorf("s on a running agent = %v", o)
+	}
+	l.Handle(Key{Rune: 'i'})
+	if !strings.Contains(Popup(l, 80, 10)[9], "interrupt busy? y/n") {
+		t.Errorf("footer does not ask: %q", Popup(l, 80, 10)[9])
+	}
+	if o := l.Handle(Key{Rune: 'n'}); o != Stay {
+		t.Errorf("n interrupted: %v", o)
+	}
+	l.Handle(Key{Rune: 'i'})
+	if o := l.Handle(Key{Rune: 'y'}); o != Interrupt {
+		t.Errorf("y = %v, want Interrupt", o)
+	}
+}

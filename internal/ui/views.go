@@ -33,9 +33,20 @@ type List struct {
 	Cursor    int
 	Filter    string
 	Filtering bool
-	// Confirming is set after "x": the next key decides whether the agent
-	// under the cursor is killed.
+	// Confirming is set after "x" or "i": the next key decides whether the
+	// agent under the cursor is killed or interrupted.
 	Confirming bool
+	pending    Outcome
+	// Composing is set after "p": keys go to Draft until enter sends it to
+	// the agent under the cursor, or esc drops it.
+	Composing bool
+	Draft     string
+	// Reply is what a Send or Answer outcome asks the caller to deliver.
+	Reply string
+	// PreviewOf is the pane whose screen Preview holds; the popup shows it
+	// under the list while that pane is the one under the cursor.
+	PreviewOf string
+	Preview   []string
 	// Current is the pane the user is in, marked apart from the cursor.
 	Current string
 	// Top is the first row the sidebar shows; it only moves to keep the
@@ -106,9 +117,32 @@ const (
 	Jump
 	Quit
 	Kill
+	// Seen marks a done agent as looked at, without jumping to it.
+	Seen
+	// Interrupt stops the agent's turn, as Esc in its pane would.
+	Interrupt
+	// Send delivers List.Reply to the agent as a prompt.
+	Send
+	// Answer presses the one key in List.Reply in the agent's dialog.
+	Answer
 )
 
-// Handle applies a key: vim motions and arrows, "/" to filter, enter to jump.
+// SetPreview stores pane's screen for the popup to show, without the blank
+// lines a screen usually ends in.
+func (l *List) SetPreview(pane, screen string) {
+	l.PreviewOf = pane
+	l.Preview = strings.Split(strings.TrimRight(screen, "\n \t"), "\n")
+}
+
+// previewing reports whether the row under the cursor is the one on show: a
+// dialog is only answered while the user can read it.
+func (l *List) previewing() bool {
+	r, ok := l.Selected()
+	return ok && l.PreviewOf != "" && r.ID == l.PreviewOf
+}
+
+// Handle applies a key: vim motions and arrows, "/" to filter, enter to jump,
+// and the actions on the agent under the cursor.
 func (l *List) Handle(k Key) Outcome {
 	switch k.Name {
 	case "wheelup", "wheeldown":
@@ -126,7 +160,28 @@ func (l *List) Handle(k Key) Outcome {
 	if l.Confirming {
 		l.Confirming = false
 		if k.Rune == 'y' || k.Rune == 'Y' {
-			return Kill
+			return l.pending
+		}
+		return Stay
+	}
+	if l.Composing {
+		switch {
+		case k.Name == "enter":
+			l.Composing = false
+			l.Reply, l.Draft = l.Draft, ""
+			if l.Reply != "" {
+				return Send
+			}
+		case k.Name == "esc":
+			l.Composing, l.Draft = false, ""
+		case k.Name == "backspace":
+			if r := []rune(l.Draft); len(r) > 0 {
+				l.Draft = string(r[:len(r)-1])
+			}
+		case k.Name == "ctrl-c":
+			return Quit
+		case k.Rune != 0:
+			l.Draft += string(k.Rune)
 		}
 		return Stay
 	}
@@ -166,7 +221,24 @@ func (l *List) Handle(k Key) Outcome {
 		l.Filtering = true
 	case k.Rune == 'x':
 		if _, ok := l.Selected(); ok {
-			l.Confirming = true
+			l.Confirming, l.pending = true, Kill
+		}
+	case k.Rune == 'i':
+		if r, ok := l.Selected(); ok && (r.State == machine.Running || r.State == machine.Waiting) {
+			l.Confirming, l.pending = true, Interrupt
+		}
+	case k.Rune == 's':
+		if r, ok := l.Selected(); ok && r.State == machine.Done {
+			return Seen
+		}
+	case k.Rune == 'p':
+		if _, ok := l.Selected(); ok {
+			l.Composing = true
+		}
+	case k.Rune >= '1' && k.Rune <= '9':
+		if r, ok := l.Selected(); ok && r.State == machine.Waiting && l.previewing() {
+			l.Reply = string(k.Rune)
+			return Answer
 		}
 	case k.Name == "esc" || k.Rune == 'q' || k.Name == "ctrl-c":
 		return Quit
@@ -189,7 +261,19 @@ func Popup(l *List, w, h int) []string {
 	if nameW < 8 {
 		nameW = 8
 	}
-	body := h - len(lines) - 1
+	// The list keeps the lines its rows need, and at least half; the screen
+	// of the agent under the cursor gets the rest.
+	body, shown := h-len(lines)-1, 0
+	if l.PreviewOf != "" && body >= 12 {
+		need := len(rows)
+		if need < 1 {
+			need = 1
+		}
+		if shown = body - need; shown < body/2 {
+			shown = body / 2
+		}
+		body -= shown
+	}
 	start := 0
 	if cur := l.clamp(len(rows)); cur >= body {
 		start = cur - body + 1
@@ -217,11 +301,38 @@ func Popup(l *List, w, h int) []string {
 	if len(rows) == 0 {
 		lines = append(lines, dim+" no agents"+reset)
 	}
-	for len(lines) < h-1 {
+	for len(lines) < h-1-shown {
 		lines = append(lines, "")
 	}
-	lines = append(lines, footer(l, w, "j/k move · enter jump · / filter · x kill · q close"))
+	if shown > 0 {
+		lines = append(lines, previewLines(l, w, shown)...)
+	}
+	lines = append(lines, footer(l, w, "enter jump · / filter · p send · 1-9 answer · i interrupt · s seen · x kill · q close"))
 	return lines
+}
+
+// previewLines is the bottom of the selected agent's screen under a rule
+// that names it, exactly n lines.
+func previewLines(l *List, w, n int) []string {
+	title := ""
+	var screen []string
+	if r, ok := l.Selected(); ok && l.previewing() {
+		title, screen = " "+r.Name+" ", l.Preview
+		if r.State == machine.Waiting && r.Reason != "" {
+			title += "· " + r.Reason + " "
+		}
+	}
+	out := []string{dim + Fit("──"+title+strings.Repeat("─", w), w) + reset}
+	if len(screen) > n-1 {
+		screen = screen[len(screen)-(n-1):]
+	}
+	for _, line := range screen {
+		out = append(out, Fit(" "+strings.ReplaceAll(line, "\t", " "), w))
+	}
+	for len(out) < n {
+		out = append(out, "")
+	}
+	return out
 }
 
 // Sidebar renders one session's agents in a narrow column, plus a summary of
@@ -284,7 +395,7 @@ func Sidebar(l *List, others []Row, session string, focused bool, w, h int) []st
 		other = "other sessions: none"
 	}
 	lines = append(lines, " "+Fit(other, w-1))
-	help := "j/k · enter · x kill · q"
+	help := "enter · p send · i · s · x · q"
 	if !focused {
 		help = "C-h to pick"
 	}
@@ -295,8 +406,19 @@ func Sidebar(l *List, others []Row, session string, focused bool, w, h int) []st
 func footer(l *List, w int, help string) string {
 	if l.Confirming {
 		if r, ok := l.Selected(); ok {
-			return "\x1b[1;31m" + " " + Fit("kill "+r.Name+"? y/n", w-1) + reset
+			verb := "kill "
+			if l.pending == Interrupt {
+				verb = "interrupt "
+			}
+			return "\x1b[1;31m" + " " + Fit(verb+r.Name+"? y/n", w-1) + reset
 		}
+	}
+	if l.Composing {
+		to := ""
+		if r, ok := l.Selected(); ok {
+			to = r.Name
+		}
+		return " " + Fit(dim+"to "+to+" > "+reset+l.Draft+"▏", w-1)
 	}
 	if l.Filtering || l.Filter != "" {
 		cursor := ""

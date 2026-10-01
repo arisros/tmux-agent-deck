@@ -29,10 +29,15 @@ func buildVersion() string {
 const usageText = `usage: deck <command> [flags]
 
 views:
-  popup                                agents of every session, most urgent first; enter jumps, x kills
+  popup                                agents of every session, most urgent first, with the selected one's screen;
+                                       enter jumps, p sends a prompt, 1-9 answers a dialog, i interrupts, s marks seen, x kills
   sidebar toggle --session S --window W   this session's agents in a pane that follows you
   list [--json]                        print the agents and the plan usage
   events [--pane P] [-n N] [--json]    print the log of state changes, oldest first
+
+act on an agent (only ever a pane whose agent is still running):
+  send [--no-enter] <pane> [text...]   type a prompt into the agent and submit it; text from stdin when omitted
+  interrupt <pane>                     stop the agent's turn, as Esc in its pane would
 
 setup:
   install --claude [--record] [--wrap-statusline] [--apply] [--settings FILE]
@@ -66,6 +71,8 @@ var commands = map[string]func(args []string) error{
 	"sidebar":   runSidebar,
 	"list":      runList,
 	"events":    runEvents,
+	"send":      func(a []string) error { return runSend(a, os.Stdin) },
+	"interrupt": runInterrupt,
 	"tmux-init": runTmuxInit,
 	"install":   func(a []string) error { return runInstall(a, true) },
 	"uninstall": func(a []string) error { return runInstall(a, false) },

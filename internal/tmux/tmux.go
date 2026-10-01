@@ -53,6 +53,17 @@ func (c Client) Run(args ...string) (string, error) {
 	return out.String(), nil
 }
 
+// RunInput is Run with input on the command's stdin, for load-buffer.
+func (c Client) RunInput(input string, args ...string) (string, error) {
+	var out, errb bytes.Buffer
+	cmd := c.command(args...)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = strings.NewReader(input), &out, &errb
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("tmux %s: %w: %s", args[0], err, strings.TrimSpace(errb.String()))
+	}
+	return out.String(), nil
+}
+
 // Batch runs commands joined with ";", in as few invocations as the size
 // limit allows.
 func (c Client) Batch(cmds [][]string) error {

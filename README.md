@@ -50,7 +50,7 @@ set -g pane-border-format           ' #{pane_title}#{E:@deck_pane_icon} '
 
 | Where | What |
 |---|---|
-| **Popup** `prefix a` | every agent in every session, most urgent first, with context used, tokens, cost, and your plan's 5-hour and 7-day usage |
+| **Popup** `prefix a` | every agent in every session, most urgent first, with context used, tokens, cost, and your plan's 5-hour and 7-day usage; below the list, the screen of the agent under the cursor, so you can read a dialog and answer it from here |
 | **Sidebar** `prefix e` | this session's agents in a pane that follows you across windows, plus a one-line count of the other sessions |
 | **Tabs and borders** | the icon of the most urgent agent in each window, and of each agent pane |
 | **Sounds** | Ping when an agent starts waiting, Funk when it finishes, only for panes you are not looking at |
@@ -134,8 +134,14 @@ The screen is only trusted for Claude's explicit markers (its dialogs, the spinn
 | `g` `G` | top, bottom | top, bottom |
 | `/` | filter | filter |
 | Enter, `l`, → | jump to the agent, across sessions | jump to the agent |
+| `p`, text, Enter | send a prompt to the agent | the same |
+| `1` to `9` | press that key in a waiting agent's dialog, while its screen is shown | |
+| `i` then `y` | interrupt the agent's turn (Esc) | the same |
+| `s` | mark a done agent as seen | the same |
 | `x` then `y` | kill the agent's pane | kill the agent's pane |
 | `q`, Esc | close | close the sidebar |
+
+The deck only types into a pane whose agent is still running: tmux checks that in the same call that sends, so a pane that fell back to a shell never receives a prompt as a command. The same actions work from a script with `deck send <pane> <text>` and `deck interrupt <pane>`.
 
 The sidebar keeps its place as the full-height left column: it follows you to other windows, comes back after `swap-pane`, `rotate-window` or a layout change, restores its width when squeezed, and leaves a window once it is the only pane left.
 

@@ -108,8 +108,19 @@ func runPopup(args []string) (err error) {
 	defer tick.Stop()
 	anim := time.NewTicker(250 * time.Millisecond)
 	defer anim.Stop()
+	// After the deck types into a pane, its screen is read once more.
+	settle := time.NewTimer(time.Hour)
+	defer settle.Stop()
+	shown := ""
 
 	for {
+		// The screen of the agent under the cursor is read when the cursor
+		// lands on it and whenever something may have changed it, never on a
+		// timer of its own.
+		if r, ok := l.Selected(); ok && r.ID != shown {
+			preview(c, l)
+			shown = r.ID
+		}
 		w, h := t.Size()
 		t.Draw(ui.Popup(l, w, h))
 		frames := anim.C
@@ -124,7 +135,7 @@ func runPopup(args []string) (err error) {
 				logView("popup: input closed", t.Trace())
 				return nil
 			}
-			switch l.Handle(k) {
+			switch o := l.Handle(k); o {
 			case ui.Quit:
 				logView(fmt.Sprintf("popup: quit on %+v", k), t.Trace())
 				return nil
@@ -137,13 +148,36 @@ func runPopup(args []string) (err error) {
 					_, _ = c.Run("kill-pane", "-t", r.ID)
 					refresh(d, c, l, false)
 				}
+			default:
+				if act(d, c, l, o) {
+					refresh(d, c, l, false)
+					settle.Reset(300 * time.Millisecond)
+				}
 			}
+		case <-settle.C:
+			shown = ""
 		case <-changed:
 			refresh(d, c, l, false)
+			shown = ""
 		case <-tick.C:
 			refresh(d, c, l, true)
+			shown = ""
 		}
 	}
+}
+
+// preview reads the screen of the agent under the cursor into the list.
+func preview(c tmux.Client, l *ui.List) {
+	r, ok := l.Selected()
+	if !ok {
+		l.PreviewOf, l.Preview = "", nil
+		return
+	}
+	screen, err := c.Capture(r.ID)
+	if err != nil {
+		screen = ""
+	}
+	l.SetPreview(r.ID, screen)
 }
 
 func refresh(d *deck.Deck, c tmux.Client, l *ui.List, repair bool) {
@@ -353,7 +387,7 @@ func sidebarRun(c tmux.Client, session string) (err error) {
 			if !ok {
 				return nil
 			}
-			switch l.Handle(k) {
+			switch o := l.Handle(k); o {
 			case ui.Quit:
 				return nil
 			case ui.Jump:
@@ -364,6 +398,8 @@ func sidebarRun(c tmux.Client, session string) (err error) {
 				if r, ok := l.Selected(); ok {
 					_, _ = c.Run("kill-pane", "-t", r.ID)
 				}
+			default:
+				act(d, c, l, o)
 			}
 			load(false)
 		case <-changed:
