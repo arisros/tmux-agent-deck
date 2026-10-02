@@ -1,4 +1,4 @@
-package deck
+package ytta
 
 import (
 	"bufio"
@@ -10,11 +10,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/arisros/tmux-agent-deck/internal/agent"
-	"github.com/arisros/tmux-agent-deck/internal/events"
-	"github.com/arisros/tmux-agent-deck/internal/hook"
-	"github.com/arisros/tmux-agent-deck/internal/machine"
-	"github.com/arisros/tmux-agent-deck/internal/tmux"
+	"github.com/arisros/ytta/internal/agent"
+	"github.com/arisros/ytta/internal/events"
+	"github.com/arisros/ytta/internal/hook"
+	"github.com/arisros/ytta/internal/machine"
+	"github.com/arisros/ytta/internal/tmux"
 )
 
 type fakeTmux struct {
@@ -41,7 +41,7 @@ func (f *fakeTmux) Batch(cmds [][]string) error {
 	return nil
 }
 
-func (f *fakeTmux) state(pane string) string { return f.opts[pane+"/@deck_state"] }
+func (f *fakeTmux) state(pane string) string { return f.opts[pane+"/@ytta_state"] }
 
 // sounds lists the sound commands published; the fake has no client, so
 // every pane counts as unwatched.
@@ -69,7 +69,7 @@ func (f *fakeTmux) watchedBranch() string {
 	return ""
 }
 
-func newDeck(t *testing.T, f *fakeTmux) *Deck {
+func newYtta(t *testing.T, f *fakeTmux) *Ytta {
 	t.Helper()
 	d, err := New(f, t.TempDir())
 	if err != nil {
@@ -79,7 +79,7 @@ func newDeck(t *testing.T, f *fakeTmux) *Deck {
 	return d
 }
 
-func send(t *testing.T, d *Deck, pane, payload string) {
+func send(t *testing.T, d *Ytta, pane, payload string) {
 	t.Helper()
 	p, err := hook.Decode(strings.NewReader(payload))
 	if err != nil {
@@ -96,7 +96,7 @@ func ev(name, extra string) string {
 
 func TestHotPathSkipsTmux(t *testing.T) {
 	f := newFake()
-	d := newDeck(t, f)
+	d := newYtta(t, f)
 	send(t, d, "%1", ev("SessionStart", `,"source":"startup"`))
 	send(t, d, "%1", ev("UserPromptSubmit", ""))
 	before := len(f.batches)
@@ -114,7 +114,7 @@ func TestHotPathSkipsTmux(t *testing.T) {
 
 func TestSoundsOnlyOnEdges(t *testing.T) {
 	f := newFake()
-	d := newDeck(t, f)
+	d := newYtta(t, f)
 	send(t, d, "%1", ev("UserPromptSubmit", ""))
 	send(t, d, "%1", ev("PermissionRequest", ""))
 	send(t, d, "%1", ev("Notification", `,"notification_type":"permission_prompt"`))
@@ -131,17 +131,17 @@ func TestSoundsOnlyOnEdges(t *testing.T) {
 
 func TestWatchedStopIsIdleAndSilent(t *testing.T) {
 	f := newFake()
-	d := newDeck(t, f)
+	d := newYtta(t, f)
 	send(t, d, "%1", ev("UserPromptSubmit", ""))
 	send(t, d, "%1", ev("Stop", ""))
-	if got := f.watchedBranch(); got != "set-option -p -t %1 @deck_state idle" {
+	if got := f.watchedBranch(); got != "set-option -p -t %1 @ytta_state idle" {
 		t.Errorf("watched branch = %q, want the state set to idle without a sound", got)
 	}
 }
 
 func TestNoVisibilityRoundTrip(t *testing.T) {
 	f := newFake()
-	d := newDeck(t, f)
+	d := newYtta(t, f)
 	send(t, d, "%1", ev("UserPromptSubmit", ""))
 	before := len(f.batches)
 	send(t, d, "%1", ev("Stop", ""))
@@ -152,10 +152,10 @@ func TestNoVisibilityRoundTrip(t *testing.T) {
 
 func TestSessionEndClearsPane(t *testing.T) {
 	f := newFake()
-	d := newDeck(t, f)
+	d := newYtta(t, f)
 	send(t, d, "%1", ev("UserPromptSubmit", ""))
 	send(t, d, "%1", ev("SessionEnd", `,"reason":"prompt_input_exit"`))
-	if _, ok := f.opts["%1/@deck_state"]; ok {
+	if _, ok := f.opts["%1/@ytta_state"]; ok {
 		t.Error("state not cleared")
 	}
 	if _, err := os.Stat(filepath.Join(d.Dir, "s1.json")); !os.IsNotExist(err) {
@@ -165,7 +165,7 @@ func TestSessionEndClearsPane(t *testing.T) {
 
 func TestFocusClearsDone(t *testing.T) {
 	f := newFake()
-	d := newDeck(t, f)
+	d := newYtta(t, f)
 	send(t, d, "%1", ev("UserPromptSubmit", ""))
 	send(t, d, "%1", ev("Stop", ""))
 	if err := d.Focus("%1"); err != nil {
@@ -178,7 +178,7 @@ func TestFocusClearsDone(t *testing.T) {
 
 func TestReconcileRepairsSilentEndings(t *testing.T) {
 	f := newFake()
-	d := newDeck(t, f)
+	d := newYtta(t, f)
 	send(t, d, "%1", ev("UserPromptSubmit", ""))
 	send(t, d, "%1", ev("PermissionRequest", ""))
 	f.screen = screenIdle
@@ -192,7 +192,7 @@ func TestReconcileRepairsSilentEndings(t *testing.T) {
 
 func TestIgnoresPayloadWithoutSession(t *testing.T) {
 	f := newFake()
-	d := newDeck(t, f)
+	d := newYtta(t, f)
 	send(t, d, "%1", `{"hook_event_name":"UserPromptSubmit"}`)
 	if len(f.batches) != 0 {
 		t.Error("published without a session id")
@@ -221,7 +221,7 @@ const (
   ⏸ manual mode on · esc to interrupt · ← 4 agents
 `
 	screenDialog = ` Bash command
-   touch /tmp/deck-lab/a
+   touch /tmp/ytta-lab/a
  Do you want to proceed?
  ❯ 1. Yes
    4. No
@@ -268,7 +268,7 @@ const (
 	screenToolRunningAuto = `● Bash(go test ./...)
   ⎿  Running…
                                            ✔ Update installed · Restart to update
-──────────────────────────────────────────────────── tmux-agent-deck-plan ─
+──────────────────────────────────────────────────── ytta-plan ─
 ❯ 
 ───────────────────────────────────────────────────────────────────────────
   Opus 5.5 (1M context) · ctx 59% · 5h 25% · 7d 5%
@@ -278,7 +278,7 @@ const (
 	// is the one sign of work on the screen.
 	screenSpinner = `✽ Mustering… (4m 8s · ↓ 13.3k tokens)
                                                            ✔ Update installed · Restart to update
-──────────────────────────────────────────────────────────── tmux-agent-deck-plan ─
+──────────────────────────────────────────────────────────── ytta-plan ─
 ❯ 
 ───────────────────────────────────────────────────────────────────────────────────
   Opus 5.5 (1M context) · ctx 64% · 5h 27% · 7d 5%
@@ -363,7 +363,7 @@ func TestFixtures(t *testing.T) {
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
 			f := newFake()
-			d := newDeck(t, f)
+			d := newYtta(t, f)
 			var trace []string
 			d.Emit = func(e events.Event) {
 				trace = append(trace, strings.TrimSpace(strings.Join(
@@ -393,7 +393,7 @@ func TestFixtures(t *testing.T) {
 
 // A recording nobody replays protects nothing.
 func TestEveryFixtureIsReplayed(t *testing.T) {
-	src, err := os.ReadFile("deck_test.go")
+	src, err := os.ReadFile("ytta_test.go")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -411,7 +411,7 @@ func TestEveryFixtureIsReplayed(t *testing.T) {
 
 func TestSweepForgetsExitedAgents(t *testing.T) {
 	f := newFake()
-	d := newDeck(t, f)
+	d := newYtta(t, f)
 	var kinds []string
 	d.Emit = func(e events.Event) { kinds = append(kinds, e.Kind+" "+e.Pane) }
 	send(t, d, "%1", ev("UserPromptSubmit", ""))
@@ -442,7 +442,7 @@ func codexEvent(name, extra string) string {
 	return fmt.Sprintf(`{"hook_event_name":%q,"session_id":"c1"%s}`, name, extra)
 }
 
-func sendAs(t *testing.T, d *Deck, name, pane, payload string) {
+func sendAs(t *testing.T, d *Ytta, name, pane, payload string) {
 	t.Helper()
 	p, err := hook.Decode(strings.NewReader(payload))
 	if err != nil {
@@ -458,7 +458,7 @@ func sendAs(t *testing.T, d *Deck, name, pane, payload string) {
 // command does, and from then on the record does.
 func TestCodexTurn(t *testing.T) {
 	f := newFake()
-	d := newDeck(t, f)
+	d := newYtta(t, f)
 	var trace []string
 	d.Emit = func(e events.Event) { trace = append(trace, e.Kind+" "+e.From+">"+e.To) }
 	steps := []struct{ event, extra, state string }{
@@ -477,8 +477,8 @@ func TestCodexTurn(t *testing.T) {
 			t.Fatalf("after %s: %q, want %q", s.event, got, s.state)
 		}
 	}
-	if got := f.opts["%9/@deck_agent"]; got != "codex" {
-		t.Errorf("@deck_agent = %q", got)
+	if got := f.opts["%9/@ytta_agent"]; got != "codex" {
+		t.Errorf("@ytta_agent = %q", got)
 	}
 	want := "Begin idle>idle,Prompt idle>running,Permission running>waiting,ToolEnd waiting>running,Stop running>done,Prompt done>running,Interrupt running>idle"
 	if got := strings.Join(trace, ","); got != want {
@@ -499,7 +499,7 @@ func TestCodexTurn(t *testing.T) {
 	if err := d.Reconcile("%9", "c1", machine.Running); err != nil {
 		t.Fatal(err)
 	}
-	if got, why := f.state("%9"), f.opts["%9/@deck_reason"]; got != machine.Waiting || why != "dialog" {
+	if got, why := f.state("%9"), f.opts["%9/@ytta_reason"]; got != machine.Waiting || why != "dialog" {
 		t.Errorf("Codex dialog on screen: %q %q, want waiting dialog", got, why)
 	}
 
@@ -516,7 +516,7 @@ func TestCodexTurn(t *testing.T) {
 
 func TestNotifyCommandGetsStatePaneAndReason(t *testing.T) {
 	f := newFake()
-	d := newDeck(t, f)
+	d := newYtta(t, f)
 	send(t, d, "%7", ev("UserPromptSubmit", ""))
 	send(t, d, "%7", ev("PermissionRequest", `,"tool_name":"Bash"`))
 	send(t, d, "%7", ev("PostToolUse", ""))
@@ -526,10 +526,10 @@ func TestNotifyCommandGetsStatePaneAndReason(t *testing.T) {
 		t.Fatalf("%d alerts, want one for waiting and one for done: %q", len(got), got)
 	}
 	for i, want := range []string{
-		`run-shell -b '#{@deck-notify-command} waiting %7 permission Bash'`,
-		`run-shell -b '#{@deck-notify-command} done %7'`,
+		`run-shell -b '#{@ytta-notify-command} waiting %7 permission Bash'`,
+		`run-shell -b '#{@ytta-notify-command} done %7'`,
 	} {
-		if !strings.Contains(got[i], want) || !strings.Contains(got[i], `if-shell -F "#{@deck-notify-command}"`) {
+		if !strings.Contains(got[i], want) || !strings.Contains(got[i], `if-shell -F "#{@ytta-notify-command}"`) {
 			t.Errorf("alert %d = %q, want it to run %q when the option is set", i, got[i], want)
 		}
 	}
@@ -537,15 +537,15 @@ func TestNotifyCommandGetsStatePaneAndReason(t *testing.T) {
 
 func TestReasonIsPublishedAndCleared(t *testing.T) {
 	f := newFake()
-	d := newDeck(t, f)
-	why := func() string { return f.opts["%1/@deck_reason"] }
+	d := newYtta(t, f)
+	why := func() string { return f.opts["%1/@ytta_reason"] }
 	send(t, d, "%1", ev("UserPromptSubmit", ""))
 	send(t, d, "%1", ev("PermissionRequest", `,"tool_name":"Bash","tool_input":{"command":"secret"}`))
 	if got := why(); got != "permission Bash" {
 		t.Fatalf("reason = %q, want permission Bash", got)
 	}
 	send(t, d, "%1", ev("PostToolUse", ""))
-	if _, set := f.opts["%1/@deck_reason"]; set {
+	if _, set := f.opts["%1/@ytta_reason"]; set {
 		t.Errorf("reason still %q after the approval", why())
 	}
 	send(t, d, "%1", ev("PermissionRequest", `,"tool_name":"AskUserQuestion"`))
@@ -553,7 +553,7 @@ func TestReasonIsPublishedAndCleared(t *testing.T) {
 		t.Errorf("reason = %q, want question", got)
 	}
 	send(t, d, "%1", ev("SessionEnd", ""))
-	if _, set := f.opts["%1/@deck_reason"]; set {
+	if _, set := f.opts["%1/@ytta_reason"]; set {
 		t.Errorf("reason survives the session: %q", why())
 	}
 }
@@ -606,12 +606,12 @@ func readFixture(t *testing.T, name string) []string {
 func TestDiscoverUnknownClaudePanes(t *testing.T) {
 	f := newFake()
 	f.screen = screenWorking
-	d := newDeck(t, f)
+	d := newYtta(t, f)
 	panes := []tmux.Pane{
 		{ID: "%1", Command: "2.1.284"},                   // unknown agent: discovered
 		{ID: "%2", Command: "2.1.284", State: "waiting"}, // known: left alone
 		{ID: "%3", Command: "zsh"},                       // not claude
-		{ID: "%4", Command: "2.1.284", Sidebar: "1"},     // the deck's own sidebar
+		{ID: "%4", Command: "2.1.284", Sidebar: "1"},     // ytta's own sidebar
 	}
 	if n := d.Discover(panes); n != 1 {
 		t.Fatalf("discovered %d panes, want 1", n)
@@ -628,7 +628,7 @@ func TestDiscoverUnknownClaudePanes(t *testing.T) {
 // until the tool ends, so without the screen the agent would stay red.
 func TestApprovedPromptLeavesWaitingBeforeTheToolEnds(t *testing.T) {
 	f := newFake()
-	d := newDeck(t, f)
+	d := newYtta(t, f)
 	send(t, d, "%1", ev("UserPromptSubmit", ""))
 	send(t, d, "%1", ev("PermissionRequest", ""))
 	f.screen = screenToolRunningAuto
@@ -643,7 +643,7 @@ func TestApprovedPromptLeavesWaitingBeforeTheToolEnds(t *testing.T) {
 // The bug this redesign fixes: a running tool must never read as idle.
 func TestRunningToolNeverReadsIdle(t *testing.T) {
 	f := newFake()
-	d := newDeck(t, f)
+	d := newYtta(t, f)
 	send(t, d, "%1", ev("UserPromptSubmit", ""))
 	f.screen = screenToolRunningAuto
 	if err := d.Reconcile("%1", "s1", machine.Running); err != nil {
@@ -658,8 +658,8 @@ func TestRunningToolNeverReadsIdle(t *testing.T) {
 // leave an empty record behind.
 func TestSendToPrunedSessionCreatesNothing(t *testing.T) {
 	f := newFake()
-	d := newDeck(t, f)
-	f.opts["%1/@deck_sid"] = "pruned"
+	d := newYtta(t, f)
+	f.opts["%1/@ytta_sid"] = "pruned"
 	if err := d.Focus("%1"); err != nil {
 		t.Fatal(err)
 	}

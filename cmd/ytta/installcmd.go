@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/arisros/tmux-agent-deck/internal/agent"
-	"github.com/arisros/tmux-agent-deck/internal/install"
-	"github.com/arisros/tmux-agent-deck/internal/store"
+	"github.com/arisros/ytta/internal/agent"
+	"github.com/arisros/ytta/internal/install"
+	"github.com/arisros/ytta/internal/store"
 )
 
 func runInstall(args []string, add bool) error {
@@ -88,7 +88,7 @@ func runInstall(args []string, add bool) error {
 				}
 			}
 			if !owned && !strings.Contains(string(after), install.WrapFlag) {
-				fmt.Println("Note: you have your own statusLine, so the deck will not show token usage or plan limits.")
+				fmt.Println("Note: you have your own statusLine, so ytta will not show token usage or plan limits.")
 				fmt.Println("      Add --wrap-statusline to keep yours and record them through it.")
 			}
 		}
@@ -127,7 +127,7 @@ func runInstall(args []string, add bool) error {
 	return nil
 }
 
-// target is an agent whose hooks the deck can install.
+// target is an agent whose hooks ytta can install.
 type target struct {
 	name, title string
 	path        func() string
@@ -137,16 +137,16 @@ type target struct {
 	async      bool // whether the agent's hooks take "async"
 	timeout    int  // in the agent's own unit
 	afterApply string
-	// plugin, when set, makes the target a single file the deck owns whole
+	// plugin, when set, makes the target a single file ytta owns whole
 	// instead of hook entries merged into the agent's settings.
 	plugin func(bin string) []byte
 }
 
-// installPlugin writes or removes a plugin file. The deck owns the whole
+// installPlugin writes or removes a plugin file. ytta owns the whole
 // file, and never touches one it did not write.
 func installPlugin(t *target, path string, before []byte, add, apply bool) error {
 	if before != nil && !strings.Contains(string(before), install.Marker) {
-		return fmt.Errorf("%s is not the deck's plugin; move it away first", path)
+		return fmt.Errorf("%s is not ytta's plugin; move it away first", path)
 	}
 	var after []byte
 	if add {
@@ -197,7 +197,7 @@ func opencodePluginPath() string {
 		home, _ := os.UserHomeDir()
 		base = filepath.Join(home, ".config")
 	}
-	return filepath.Join(base, "opencode", "plugins", "tmux-agent-deck.js")
+	return filepath.Join(base, "opencode", "plugins", "ytta.js")
 }
 
 var geminiEvents = []string{
@@ -225,7 +225,7 @@ var targets = []target{
 	{
 		name: "opencode", title: "opencode", path: opencodePluginPath,
 		plugin: func(bin string) []byte {
-			return []byte(strings.ReplaceAll(agent.OpenCodePlugin, "__DECK__", strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(bin)))
+			return []byte(strings.ReplaceAll(agent.OpenCodePlugin, "__YTTA__", strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(bin)))
 		},
 		afterApply: "Restart opencode to load the plugin. It reports sessions of an opencode started in a tmux pane, not ones reached with opencode attach.",
 	},
@@ -244,7 +244,7 @@ func codexHooksPath() string {
 // 0.145 and Interrupt in 0.150.
 func codexEvents() (live, recorded []string, note string) {
 	live = []string{"SessionStart", "UserPromptSubmit", "PreToolUse", "PermissionRequest", "PostToolUse", "Stop"}
-	v := os.Getenv("DECK_CODEX_VERSION")
+	v := os.Getenv("YTTA_CODEX_VERSION")
 	if v == "" {
 		out, _ := exec.Command("codex", "--version").Output()
 		v = string(out)
@@ -281,7 +281,7 @@ var liveEvents = []string{
 
 // guarded keeps Claude quiet if the plugin is removed without uninstalling:
 // a missing binary becomes a no-op instead of an error on every event. The
-// trailing comment is how uninstall recognizes the deck's commands, wherever
+// trailing comment is how uninstall recognizes ytta's commands, wherever
 // the binary lives.
 func guarded(bin, args string) string {
 	q := shellQuote(bin)
@@ -289,7 +289,7 @@ func guarded(bin, args string) string {
 }
 
 // wrapping is the statusLine command that runs the user's own line through
-// the deck. Without the binary it runs their line directly, so removing the
+// ytta. Without the binary it runs their line directly, so removing the
 // plugin never blanks a status line.
 func wrapping(bin, original64 string) string {
 	q := shellQuote(bin)
@@ -329,7 +329,7 @@ func shellQuote(s string) string {
 }
 
 func printDiff(before, after []byte) {
-	dir, err := os.MkdirTemp("", "deck-diff")
+	dir, err := os.MkdirTemp("", "ytta-diff")
 	if err == nil {
 		defer os.RemoveAll(dir)
 		a, b := filepath.Join(dir, "current"), filepath.Join(dir, "proposed")

@@ -18,12 +18,12 @@ import (
 	"time"
 )
 
-// Record is what the deck remembers about a session.
+// Record is what ytta remembers about a session.
 type Record struct {
 	Pane string `json:"pane"`
 	// Agent names the agent of the session; empty is Claude Code.
 	Agent string `json:"agent,omitempty"`
-	// Started is when the deck first heard from the session, in unix seconds.
+	// Started is when ytta first heard from the session, in unix seconds.
 	Started  int64           `json:"started,omitempty"`
 	Snapshot json.RawMessage `json:"snapshot,omitempty"`
 }
@@ -32,17 +32,17 @@ type Record struct {
 // Claude's hooks and tmux's run-shell can see different temp directories,
 // and both must find the same records.
 func DefaultDir() string {
-	if d := os.Getenv("DECK_STATE_DIR"); d != "" {
+	if d := os.Getenv("YTTA_STATE_DIR"); d != "" {
 		return d
 	}
 	return filepath.Join(Root(), "sessions")
 }
 
-// Root holds everything the deck keeps: sessions, usage, recordings, backups
-// and views.log. DECK_STATE_DIR (the sessions directory) moves all of it,
+// Root holds everything ytta keeps: sessions, usage, recordings, backups
+// and views.log. YTTA_STATE_DIR (the sessions directory) moves all of it,
 // which is how tests and custom setups stay out of ~/.local/state.
 func Root() string {
-	if d := os.Getenv("DECK_STATE_DIR"); d != "" {
+	if d := os.Getenv("YTTA_STATE_DIR"); d != "" {
 		return filepath.Dir(d)
 	}
 	base := os.Getenv("XDG_STATE_HOME")
@@ -50,7 +50,7 @@ func Root() string {
 		home, _ := os.UserHomeDir()
 		base = filepath.Join(home, ".local", "state")
 	}
-	return filepath.Join(base, "tmux-agent-deck")
+	return filepath.Join(base, "ytta")
 }
 
 // Prune deletes records untouched for longer than maxAge: sessions whose

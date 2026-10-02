@@ -13,11 +13,11 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/arisros/tmux-agent-deck/internal/deck"
-	"github.com/arisros/tmux-agent-deck/internal/events"
-	"github.com/arisros/tmux-agent-deck/internal/store"
-	"github.com/arisros/tmux-agent-deck/internal/tmux"
-	"github.com/arisros/tmux-agent-deck/internal/ui"
+	"github.com/arisros/ytta/internal/events"
+	"github.com/arisros/ytta/internal/store"
+	"github.com/arisros/ytta/internal/tmux"
+	"github.com/arisros/ytta/internal/ui"
+	"github.com/arisros/ytta/internal/ytta"
 )
 
 func runEvents(args []string) error {
@@ -57,7 +57,7 @@ func runEvents(args []string) error {
 	// sleeps inside tmux until there is something to print.
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer cancel()
-	changed := ui.Watch(ctx, tmux.FromEnv().Flags(), deck.Signal)
+	changed := ui.Watch(ctx, tmux.FromEnv().Flags(), ytta.Signal)
 	for {
 		select {
 		case <-ctx.Done():
@@ -111,7 +111,7 @@ func runWait(args []string) error {
 		return err
 	}
 	if fs.NArg() != 1 {
-		return errors.New("usage: deck wait [--state waiting,done,idle] [--timeout 10m] <pane>")
+		return errors.New("usage: ytta wait [--state waiting,done,idle] [--timeout 10m] <pane>")
 	}
 	pane := fs.Arg(0)
 	want := map[string]bool{}
@@ -135,9 +135,9 @@ func runWait(args []string) error {
 		defer stop()
 	}
 	// Subscribed before the first look, so a change in between is not missed.
-	changed := ui.Watch(ctx, c.Flags(), deck.Signal)
+	changed := ui.Watch(ctx, c.Flags(), ytta.Signal)
 	for {
-		out, err := c.Run("display-message", "-p", "-t", pane, "#{@deck_state} "+tmux.AliveFormat)
+		out, err := c.Run("display-message", "-p", "-t", pane, "#{@ytta_state} "+tmux.AliveFormat)
 		if err != nil {
 			return fmt.Errorf("pane %s is gone", pane)
 		}

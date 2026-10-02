@@ -70,12 +70,12 @@ func TestTmuxAtLeast(t *testing.T) {
 }
 
 func TestGuardedCommandCarriesTheMarker(t *testing.T) {
-	got := guarded("/opt/my tools/deck", "hook")
-	want := `test -x '/opt/my tools/deck' && '/opt/my tools/deck' hook; exit 0 # tmux-agent-deck`
+	got := guarded("/opt/my tools/ytta", "hook")
+	want := `test -x '/opt/my tools/ytta' && '/opt/my tools/ytta' hook; exit 0 # ytta`
 	if got != want {
 		t.Errorf("guarded = %q\nwant      %q", got, want)
 	}
-	if got := shellQuote("/usr/bin/deck"); got != "/usr/bin/deck" {
+	if got := shellQuote("/usr/bin/ytta"); got != "/usr/bin/ytta" {
 		t.Errorf("plain path quoted: %q", got)
 	}
 	if got := shellQuote("it's"); got != `'it'\''s'` {
@@ -84,7 +84,7 @@ func TestGuardedCommandCarriesTheMarker(t *testing.T) {
 }
 
 func TestWriteWithBackupKeepsModeAndPrunes(t *testing.T) {
-	t.Setenv("DECK_STATE_DIR", filepath.Join(t.TempDir(), "sessions"))
+	t.Setenv("YTTA_STATE_DIR", filepath.Join(t.TempDir(), "sessions"))
 	path := filepath.Join(t.TempDir(), "settings.json")
 	if err := os.WriteFile(path, []byte("{}"), 0o640); err != nil {
 		t.Fatal(err)

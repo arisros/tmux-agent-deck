@@ -1,7 +1,7 @@
-// Package deck is the adapter around the pure state machine: it loads and
+// Package ytta is the adapter around the pure state machine: it loads and
 // saves session records, asks tmux the few questions the machine needs, and
 // publishes the result as pane options that tmux formats render.
-package deck
+package ytta
 
 import (
 	"errors"
@@ -11,13 +11,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/arisros/tmux-agent-deck/internal/agent"
-	"github.com/arisros/tmux-agent-deck/internal/events"
-	"github.com/arisros/tmux-agent-deck/internal/hook"
-	"github.com/arisros/tmux-agent-deck/internal/machine"
-	"github.com/arisros/tmux-agent-deck/internal/store"
-	"github.com/arisros/tmux-agent-deck/internal/tmux"
-	"github.com/arisros/tmux-agent-deck/internal/usage"
+	"github.com/arisros/ytta/internal/agent"
+	"github.com/arisros/ytta/internal/events"
+	"github.com/arisros/ytta/internal/hook"
+	"github.com/arisros/ytta/internal/machine"
+	"github.com/arisros/ytta/internal/store"
+	"github.com/arisros/ytta/internal/tmux"
+	"github.com/arisros/ytta/internal/usage"
 )
 
 // Tmux is the subset of tmux the adapter uses, so tests can fake it.
@@ -27,8 +27,8 @@ type Tmux interface {
 	PaneOption(pane, name string) (string, error)
 }
 
-// Deck wires the machine to a store and a tmux server.
-type Deck struct {
+// Ytta wires the machine to a store and a tmux server.
+type Ytta struct {
 	Tmux    Tmux
 	Dir     string
 	Machine *machine.Machine
@@ -40,20 +40,20 @@ type Deck struct {
 	Emit func(events.Event)
 }
 
-// New returns a Deck for the given tmux server and state directory.
-func New(t Tmux, dir string) (*Deck, error) {
+// New returns a Ytta for the given tmux server and state directory.
+func New(t Tmux, dir string) (*Ytta, error) {
 	m, err := machine.New()
 	if err != nil {
 		return nil, err
 	}
-	return &Deck{Tmux: t, Dir: dir, Machine: m, Now: time.Now}, nil
+	return &Ytta{Tmux: t, Dir: dir, Machine: m, Now: time.Now}, nil
 }
 
 // Signal is the wait-for channel sidebars block on.
-const Signal = "deck"
+const Signal = "ytta"
 
 // Hook applies one hook payload from an agent session running in pane.
-func (d *Deck) Hook(p hook.Payload, pane string) error {
+func (d *Ytta) Hook(p hook.Payload, pane string) error {
 	now := d.Now().Unix()
 	a, ok := agent.For(p.Agent)
 	if !ok {
@@ -109,7 +109,7 @@ func (d *Deck) Hook(p hook.Payload, pane string) error {
 	if err != nil {
 		return err
 	}
-	// A session the deck first hears from mid-flight started, as far as it
+	// A session ytta first hears from mid-flight started, as far as it
 	// knows, now.
 	started, fresh := rec.Started, int64(0)
 	if !existed {
@@ -139,8 +139,8 @@ func (d *Deck) Hook(p hook.Payload, pane string) error {
 func isStop(e machine.Event) bool { _, ok := e.(machine.Stop); return ok }
 
 // Focus tells the machine the user looked at pane; a done agent becomes idle.
-func (d *Deck) Focus(pane string) error {
-	sid, err := d.Tmux.PaneOption(pane, "@deck_sid")
+func (d *Ytta) Focus(pane string) error {
+	sid, err := d.Tmux.PaneOption(pane, "@ytta_sid")
 	if err != nil || sid == "" {
 		return err
 	}
@@ -150,14 +150,14 @@ func (d *Deck) Focus(pane string) error {
 // Reconcile corrects a running or waiting agent from what its screen shows.
 // Claude Code fires no hook on Esc mid-turn or on a denied permission, so
 // without this an agent would look busy until its next prompt. Each agent
-// reads its own screen; one the deck cannot read is left alone.
-func (d *Deck) Reconcile(pane, sid, state string) error {
+// reads its own screen; one ytta cannot read is left alone.
+func (d *Ytta) Reconcile(pane, sid, state string) error {
 	if state != machine.Running && state != machine.Waiting {
 		return nil
 	}
 	if sid == "" {
 		var err error
-		if sid, err = d.Tmux.PaneOption(pane, "@deck_sid"); err != nil || sid == "" {
+		if sid, err = d.Tmux.PaneOption(pane, "@ytta_sid"); err != nil || sid == "" {
 			return err
 		}
 	}
@@ -175,7 +175,7 @@ func (d *Deck) Reconcile(pane, sid, state string) error {
 	}
 	from := state
 	err = d.send(pane, sid, machine.Screen{At: d.Now().Unix(), Kind: kind})
-	if to, _ := d.Tmux.PaneOption(pane, "@deck_state"); to != from && d.Log != nil {
+	if to, _ := d.Tmux.PaneOption(pane, "@ytta_state"); to != from && d.Log != nil {
 		last := ""
 		if a.Evidence != nil {
 			last = a.Evidence(screen)
@@ -187,7 +187,7 @@ func (d *Deck) Reconcile(pane, sid, state string) error {
 
 // agentOf is the agent a session's record names; Claude when there is no
 // record, as for a pane found by its screen.
-func (d *Deck) agentOf(sid string) agent.Agent {
+func (d *Ytta) agentOf(sid string) agent.Agent {
 	l, err := store.OpenExisting(d.Dir, sid)
 	if err != nil {
 		return agent.Claude
@@ -202,7 +202,7 @@ func (d *Deck) agentOf(sid string) agent.Agent {
 
 // ReconcileStale reconciles every agent that has been running or waiting for
 // at least minAge, which is what a view does before it renders.
-func (d *Deck) ReconcileStale(panes []tmux.Pane, minAge time.Duration) {
+func (d *Ytta) ReconcileStale(panes []tmux.Pane, minAge time.Duration) {
 	now := d.Now().Unix()
 	for _, p := range panes {
 		if p.SID != "" && now-p.Since >= int64(minAge.Seconds()) {
@@ -211,13 +211,13 @@ func (d *Deck) ReconcileStale(panes []tmux.Pane, minAge time.Duration) {
 	}
 }
 
-// Discover publishes a state for every agent pane the deck has not heard
+// Discover publishes a state for every agent pane ytta has not heard
 // from yet, read from its screen. An agent idle at its prompt when the hooks
 // were installed fires no hook until it is used again, and would otherwise
 // stay invisible. Only agents recognizable by their process name can be
 // found this way. The state has no session record behind it; the session's
 // next hook creates one and takes over. It returns how many panes it set.
-func (d *Deck) Discover(panes []tmux.Pane) int {
+func (d *Ytta) Discover(panes []tmux.Pane) int {
 	now := strconv.FormatInt(d.Now().Unix(), 10)
 	var cmds [][]string
 	var found []events.Event
@@ -238,9 +238,9 @@ func (d *Deck) Discover(panes []tmux.Pane) int {
 			state = machine.Waiting
 		}
 		cmds = append(cmds,
-			[]string{"set-option", "-p", "-t", p.ID, "@deck_state", state},
-			[]string{"set-option", "-p", "-t", p.ID, "@deck_since", now},
-			[]string{"set-option", "-p", "-t", p.ID, "@deck_agent", a.Name},
+			[]string{"set-option", "-p", "-t", p.ID, "@ytta_state", state},
+			[]string{"set-option", "-p", "-t", p.ID, "@ytta_since", now},
+			[]string{"set-option", "-p", "-t", p.ID, "@ytta_agent", a.Name},
 			remember(p.ID))
 		found = append(found, events.Event{Pane: p.ID, Kind: events.Discover, To: state, Source: machine.SourceScreen})
 	}
@@ -270,7 +270,7 @@ func detect(command string) (agent.Agent, bool) {
 // options are unset and the session record deleted, so a pane that fell back
 // to a shell stops being an agent at once instead of at the 72 hour prune.
 // It returns how many panes it cleared.
-func (d *Deck) Sweep(panes []tmux.Pane) int {
+func (d *Ytta) Sweep(panes []tmux.Pane) int {
 	var cmds [][]string
 	var gone []tmux.Pane
 	for _, p := range panes {
@@ -302,10 +302,10 @@ func (d *Deck) Sweep(panes []tmux.Pane) int {
 // remember stores the pane's foreground command, which is the agent while
 // one of its hooks runs. tmux expands the format itself, in the same call.
 func remember(pane string) []string {
-	return []string{"set-option", "-p", "-F", "-t", pane, "@deck_cmd", "#{pane_current_command}"}
+	return []string{"set-option", "-p", "-F", "-t", pane, "@ytta_cmd", "#{pane_current_command}"}
 }
 
-func (d *Deck) send(pane, sid string, ev machine.Event) error {
+func (d *Ytta) send(pane, sid string, ev machine.Event) error {
 	l, err := store.OpenExisting(d.Dir, sid)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil // pruned or never recorded: nothing to update
@@ -336,12 +336,12 @@ func (d *Deck) send(pane, sid string, ev machine.Event) error {
 	return d.publish(pane, sid, name, res, "", 0)
 }
 
-func (d *Deck) emitResult(kind, sid, pane string, res machine.Result) {
+func (d *Ytta) emitResult(kind, sid, pane string, res machine.Result) {
 	d.emit(events.Event{SID: sid, Pane: pane, Kind: kind, From: res.From, To: res.To,
 		Source: res.Ctx.Source, Reason: res.Ctx.Reason, Tool: res.Ctx.Tool})
 }
 
-func (d *Deck) emit(e events.Event) {
+func (d *Ytta) emit(e events.Event) {
 	if d.Emit == nil {
 		return
 	}
@@ -361,7 +361,7 @@ func shellWords(s string) string {
 	}, s)
 }
 
-// reason is what @deck_reason shows: "permission Bash", "question".
+// reason is what @ytta_reason shows: "permission Bash", "question".
 func reason(c machine.Ctx) string {
 	if c.Tool == "" {
 		return c.Reason
@@ -371,37 +371,37 @@ func reason(c machine.Ctx) string {
 
 // publish writes a session's state to its pane. started, when not zero, is
 // also written: it only changes when a session begins.
-func (d *Deck) publish(pane, sid, name string, res machine.Result, sound string, started int64) error {
+func (d *Ytta) publish(pane, sid, name string, res machine.Result, sound string, started int64) error {
 	if pane == "" {
 		return nil
 	}
 	cmds := [][]string{
-		{"set-option", "-p", "-t", pane, "@deck_state", res.To},
-		{"set-option", "-p", "-t", pane, "@deck_since", strconv.FormatInt(res.Ctx.Since, 10)},
-		{"set-option", "-p", "-t", pane, "@deck_sid", sid},
-		{"set-option", "-p", "-t", pane, "@deck_agent", name},
+		{"set-option", "-p", "-t", pane, "@ytta_state", res.To},
+		{"set-option", "-p", "-t", pane, "@ytta_since", strconv.FormatInt(res.Ctx.Since, 10)},
+		{"set-option", "-p", "-t", pane, "@ytta_sid", sid},
+		{"set-option", "-p", "-t", pane, "@ytta_agent", name},
 	}
 	cmds = append(cmds, remember(pane))
 	if started > 0 {
-		cmds = append(cmds, []string{"set-option", "-p", "-t", pane, "@deck_started", strconv.FormatInt(started, 10)})
+		cmds = append(cmds, []string{"set-option", "-p", "-t", pane, "@ytta_started", strconv.FormatInt(started, 10)})
 	}
 	if why := reason(res.Ctx); why != "" {
-		cmds = append(cmds, []string{"set-option", "-p", "-t", pane, "@deck_reason", why})
+		cmds = append(cmds, []string{"set-option", "-p", "-t", pane, "@ytta_reason", why})
 	} else {
-		cmds = append(cmds, []string{"set-option", "-p", "-u", "-t", pane, "@deck_reason"})
+		cmds = append(cmds, []string{"set-option", "-p", "-u", "-t", pane, "@ytta_reason"})
 	}
 	// tmux decides and plays in the same round trip: nothing is queried
 	// first, and the player runs detached from the hook. The user's notify
 	// command follows the same path, with the state, the pane and the reason
 	// as arguments; a pane title or a prompt never reaches a shell here.
-	play := `if-shell -F "#{!=:#{@deck-sound},off}" "run-shell -b '#{@deck-sound-command} #{@deck-sound-` + sound + `}'" ; ` +
-		`if-shell -F "#{@deck-notify-command}" "run-shell -b '#{@deck-notify-command} ` +
+	play := `if-shell -F "#{!=:#{@ytta-sound},off}" "run-shell -b '#{@ytta-sound-command} #{@ytta-sound-` + sound + `}'" ; ` +
+		`if-shell -F "#{@ytta-notify-command}" "run-shell -b '#{@ytta-notify-command} ` +
 		strings.TrimSpace(sound+" "+pane+" "+shellWords(reason(res.Ctx))) + `'"`
 	switch {
 	case sound == "done":
 		// A turn the user watched end is idle and silent.
 		cmds = append(cmds, []string{"if-shell", "-F", "-t", pane, tmux.VisibleFormat,
-			"set-option -p -t " + pane + " @deck_state idle", play})
+			"set-option -p -t " + pane + " @ytta_state idle", play})
 	case sound != "":
 		cmds = append(cmds, []string{"if-shell", "-F", "-t", pane, tmux.VisibleFormat, "", play})
 	}
@@ -415,7 +415,7 @@ func clear(pane string) [][]string {
 
 func unset(pane string) [][]string {
 	var cmds [][]string
-	for _, o := range []string{"@deck_state", "@deck_since", "@deck_sid", "@deck_reason", "@deck_cmd", "@deck_agent", "@deck_started"} {
+	for _, o := range []string{"@ytta_state", "@ytta_since", "@ytta_sid", "@ytta_reason", "@ytta_cmd", "@ytta_agent", "@ytta_started"} {
 		cmds = append(cmds, []string{"set-option", "-p", "-u", "-t", pane, o})
 	}
 	return cmds

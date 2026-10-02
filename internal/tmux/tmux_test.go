@@ -8,7 +8,7 @@ import (
 func TestChunkStaysUnderLimit(t *testing.T) {
 	var cmds [][]string
 	for i := 0; i < 400; i++ {
-		cmds = append(cmds, []string{"set-option", "-p", "-t", "%123", "@deck_state", "running"})
+		cmds = append(cmds, []string{"set-option", "-p", "-t", "%123", "@ytta_state", "running"})
 	}
 	chunks := Chunk(cmds, MaxBatchBytes)
 	if len(chunks) < 2 {

@@ -13,20 +13,20 @@ import (
 
 	"github.com/arisros/fate/render"
 
-	"github.com/arisros/tmux-agent-deck/internal/deck"
-	"github.com/arisros/tmux-agent-deck/internal/events"
-	"github.com/arisros/tmux-agent-deck/internal/hook"
-	"github.com/arisros/tmux-agent-deck/internal/install"
-	"github.com/arisros/tmux-agent-deck/internal/machine"
-	"github.com/arisros/tmux-agent-deck/internal/record"
-	"github.com/arisros/tmux-agent-deck/internal/store"
-	"github.com/arisros/tmux-agent-deck/internal/tmux"
-	"github.com/arisros/tmux-agent-deck/internal/usage"
+	"github.com/arisros/ytta/internal/events"
+	"github.com/arisros/ytta/internal/hook"
+	"github.com/arisros/ytta/internal/install"
+	"github.com/arisros/ytta/internal/machine"
+	"github.com/arisros/ytta/internal/record"
+	"github.com/arisros/ytta/internal/store"
+	"github.com/arisros/ytta/internal/tmux"
+	"github.com/arisros/ytta/internal/usage"
+	"github.com/arisros/ytta/internal/ytta"
 )
 
-func newDeck() (*deck.Deck, tmux.Client, error) {
+func newYtta() (*ytta.Ytta, tmux.Client, error) {
 	c := tmux.FromEnv()
-	d, err := deck.New(c, store.DefaultDir())
+	d, err := ytta.New(c, store.DefaultDir())
 	if d != nil {
 		d.Log = func(s string) { logView(s, nil) }
 		d.Emit = events.Writer(store.Root())
@@ -55,14 +55,14 @@ func runHook(args []string, stdin io.Reader) error {
 		var p hook.Payload
 		if p, err = hook.Decode(stdin); err == nil {
 			p.Agent = *name
-			var d *deck.Deck
-			if d, _, err = newDeck(); err == nil {
+			var d *ytta.Ytta
+			if d, _, err = newYtta(); err == nil {
 				err = d.Hook(p, pane)
 			}
 		}
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "deck hook:", err)
+		fmt.Fprintln(os.Stderr, "ytta hook:", err)
 	}
 	return nil
 }
@@ -77,16 +77,16 @@ func runUsage(stdin io.Reader) error {
 		err = usage.RecordReport(usage.DefaultDir(store.DefaultDir()), r, os.Getenv("TMUX_PANE"), time.Now())
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "deck usage:", err)
+		fmt.Fprintln(os.Stderr, "ytta usage:", err)
 	}
 	return nil
 }
 
 func runFocus(args []string) error {
 	if len(args) != 1 {
-		return errors.New("usage: deck focus <pane>")
+		return errors.New("usage: ytta focus <pane>")
 	}
-	d, _, err := newDeck()
+	d, _, err := newYtta()
 	if err != nil {
 		return err
 	}
@@ -95,13 +95,13 @@ func runFocus(args []string) error {
 
 func runReconcile(args []string) error {
 	if len(args) != 1 {
-		return errors.New("usage: deck reconcile <pane>")
+		return errors.New("usage: ytta reconcile <pane>")
 	}
-	d, c, err := newDeck()
+	d, c, err := newYtta()
 	if err != nil {
 		return err
 	}
-	state, err := c.PaneOption(args[0], "@deck_state")
+	state, err := c.PaneOption(args[0], "@ytta_state")
 	if err != nil {
 		return err
 	}

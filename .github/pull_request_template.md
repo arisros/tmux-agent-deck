@@ -6,5 +6,5 @@
 
 - [ ] `make test lint` pass; `make perf` too if a hook or view path changed
 - [ ] a test covers the change (a bug fix has one that failed before)
-- [ ] README and `deck --help` match the behavior
+- [ ] README and `ytta --help` match the behavior
 - [ ] PR title is a Conventional Commit; it becomes the changelog entry

@@ -1,4 +1,4 @@
-// Package integration drives the real deck binary against a private tmux
+// Package integration drives the real ytta binary against a private tmux
 // server. Every tmux command here names that server explicitly (-L), so the
 // tests never reach the tmux server the developer works in.
 package integration
@@ -20,15 +20,15 @@ import (
 var sharedBin, sharedFake string
 
 func TestMain(m *testing.M) {
-	dir, err := os.MkdirTemp("", "deck-it-")
+	dir, err := os.MkdirTemp("", "ytta-it-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	sharedBin = filepath.Join(dir, "tmux-agent-deck", "bin", "deck")
+	sharedBin = filepath.Join(dir, "ytta", "bin", "ytta")
 	sharedFake = filepath.Join(dir, "2.1.999")
 	for _, b := range [][]string{
-		{"build", "-o", sharedBin, "../../cmd/deck"},
+		{"build", "-o", sharedBin, "../../cmd/ytta"},
 		{"build", "-o", sharedFake, "./testdata/fakeclaude"},
 	} {
 		if out, err := exec.Command("go", b...).CombinedOutput(); err != nil {
@@ -44,9 +44,9 @@ func TestMain(m *testing.M) {
 type harness struct {
 	t      *testing.T
 	socket string // -L name
-	bin    string // deck binary
+	bin    string // ytta binary
 	fake   string // fake Claude: a sleep binary named like a Claude version
-	state  string // DECK_STATE_DIR
+	state  string // YTTA_STATE_DIR
 }
 
 func newHarness(t *testing.T) *harness {
@@ -57,7 +57,7 @@ func newHarness(t *testing.T) *harness {
 	dir := t.TempDir()
 	h := &harness{
 		t:      t,
-		socket: fmt.Sprintf("deck-test-%d-%d", os.Getpid(), rand.Int()),
+		socket: fmt.Sprintf("ytta-test-%d-%d", os.Getpid(), rand.Int()),
 		bin:    sharedBin,
 		fake:   sharedFake,
 		state:  filepath.Join(dir, "state"),
@@ -70,13 +70,13 @@ func newHarness(t *testing.T) *harness {
 		_ = os.Remove(sock)
 	})
 	// Jobs started by this server's hooks inherit its global environment.
-	h.tmux("set-environment", "-g", "DECK_STATE_DIR", h.state)
+	h.tmux("set-environment", "-g", "YTTA_STATE_DIR", h.state)
 	h.tmux("set-option", "-g", "focus-events", "off") // tmux-init must turn it on
-	h.tmux("set-option", "-g", "@deck-sound", "off")
+	h.tmux("set-option", "-g", "@ytta-sound", "off")
 	// As in the real config: a border line above every pane. Without it the
 	// tests missed a pin that looped forever.
 	h.tmux("set-option", "-g", "pane-border-status", "top")
-	h.deck("", "tmux-init")
+	h.ytta("", "tmux-init")
 	return h
 }
 
@@ -88,7 +88,7 @@ func (h *harness) env(pane string) []string {
 			env = append(env, e)
 		}
 	}
-	env = append(env, "DECK_TMUX_SOCKET="+h.socket, "DECK_STATE_DIR="+h.state)
+	env = append(env, "YTTA_TMUX_SOCKET="+h.socket, "YTTA_STATE_DIR="+h.state)
 	if pane != "" {
 		env = append(env, "TMUX_PANE="+pane)
 	}
@@ -106,19 +106,19 @@ func (h *harness) tmux(args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-func (h *harness) deck(stdin string, args ...string) string {
+func (h *harness) ytta(stdin string, args ...string) string {
 	h.t.Helper()
 	cmd := exec.Command(h.bin, args...)
 	cmd.Env = h.env("")
 	cmd.Stdin = strings.NewReader(stdin)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		h.t.Fatalf("deck %v: %v\n%s", args, err, out)
+		h.t.Fatalf("ytta %v: %v\n%s", args, err, out)
 	}
 	return string(out)
 }
 
-// hook runs `deck hook` the way Claude does: payload on stdin, TMUX_PANE set.
+// hook runs `ytta hook` the way Claude does: payload on stdin, TMUX_PANE set.
 func (h *harness) hook(pane, event, extra string) time.Duration {
 	h.t.Helper()
 	return h.hookAs("", pane, event, extra)
@@ -167,7 +167,7 @@ func (h *harness) eventually(ok func() bool, what string) {
 }
 
 // diagnostics is what a timeout needs to be understood after the fact on a
-// CI runner: the deck's own log of pins and repairs, and where panes are.
+// CI runner: ytta's own log of pins and repairs, and where panes are.
 func (h *harness) diagnostics() string {
 	var b strings.Builder
 	if log, err := os.ReadFile(filepath.Join(filepath.Dir(h.state), "views.log")); err == nil {
@@ -183,7 +183,7 @@ func (h *harness) diagnostics() string {
 	return b.String()
 }
 
-// pins counts how often a sidebar pinned itself, from the deck's log.
+// pins counts how often a sidebar pinned itself, from ytta's log.
 func (h *harness) pins() int {
 	b, _ := os.ReadFile(filepath.Join(filepath.Dir(h.state), "views.log"))
 	return strings.Count(string(b), "pin ")

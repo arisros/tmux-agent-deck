@@ -1,4 +1,4 @@
-// Command deck is the tmux-agent-deck binary: Claude Code hooks call it, and
+// Command ytta is the ytta binary: Claude Code hooks call it, and
 // tmux key bindings and hooks open its views.
 package main
 
@@ -9,7 +9,7 @@ import (
 	"runtime/debug"
 	"time"
 
-	"github.com/arisros/tmux-agent-deck/internal/ui"
+	"github.com/arisros/ytta/internal/ui"
 )
 
 // version is set at build time (-X main.version) by the Makefile, the tpm
@@ -26,7 +26,7 @@ func buildVersion() string {
 	return "dev"
 }
 
-const usageText = `usage: deck <command> [flags]
+const usageText = `usage: ytta <command> [flags]
 
 views:
   popup                                agents of every session, most urgent first, with the selected one's screen;
@@ -55,7 +55,7 @@ setup:
   install --opencode [--apply] [--settings FILE]
                                        write the plugin that reports opencode's events
   uninstall --claude|--codex|--gemini|--opencode [--apply] [--settings FILE]
-                                       remove every deck hook, the deck's statusLine from Claude, or the plugin
+                                       remove every ytta hook, ytta's statusLine from Claude, or the plugin
   doctor                               check the installation
   tmux-init                            bind keys, set tmux hooks and formats (run by the tpm entrypoint)
   describe                             print the state machine as Mermaid
@@ -69,7 +69,7 @@ called by the agents and tmux, not by hand:
   reconcile <pane>                     correct a running or waiting agent from its screen
   sidebar run --session S              the sidebar process itself
   sidebar pin --session S              put the sidebar back as the left column
-  tick                                 the tab pulse frame (@deck-tab-pulse)
+  tick                                 the tab pulse frame (@ytta-tab-pulse)
 `
 
 // commands is the dispatch table; the usage text is tested against it.
@@ -124,11 +124,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	cmd, ok := commands[args[0]]
 	if !ok {
-		fmt.Fprintf(stderr, "deck: unknown command %q\n\n%s", args[0], usageText)
+		fmt.Fprintf(stderr, "ytta: unknown command %q\n\n%s", args[0], usageText)
 		return 2
 	}
 	if err := cmd(args[1:]); err != nil {
-		fmt.Fprintln(stderr, "deck:", err)
+		fmt.Fprintln(stderr, "ytta:", err)
 		return 1
 	}
 	return 0

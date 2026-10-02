@@ -204,7 +204,7 @@ func arrow(c byte) []Key {
 	return nil
 }
 
-// Watch delivers a value each time a hook signals the deck's wait-for
+// Watch delivers a value each time a hook signals ytta's wait-for
 // channel. Blocking in tmux costs no CPU, unlike polling.
 func Watch(ctx context.Context, flags []string, channel string) <-chan struct{} {
 	ch := make(chan struct{}, 1)

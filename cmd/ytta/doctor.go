@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/arisros/tmux-agent-deck/internal/install"
-	"github.com/arisros/tmux-agent-deck/internal/store"
-	"github.com/arisros/tmux-agent-deck/internal/tmux"
-	"github.com/arisros/tmux-agent-deck/internal/ui"
+	"github.com/arisros/ytta/internal/install"
+	"github.com/arisros/ytta/internal/store"
+	"github.com/arisros/ytta/internal/tmux"
+	"github.com/arisros/ytta/internal/ui"
 )
 
 func runDoctor(_ []string) error {
@@ -32,7 +32,7 @@ func runDoctor(_ []string) error {
 	}
 
 	bin, _ := os.Executable()
-	fmt.Printf("deck %s at %s\n\n", buildVersion(), bin)
+	fmt.Printf("ytta %s at %s\n\n", buildVersion(), bin)
 	if rev, err := os.ReadFile(filepath.Join(filepath.Dir(bin), ".rev")); err == nil {
 		want := strings.TrimSpace(string(rev))
 		check(want == buildVersion() || want == "", "binary matches its build stamp", "bin/.rev says "+want)
@@ -45,18 +45,18 @@ func runDoctor(_ []string) error {
 	check(err == nil && tmuxAtLeast(v, 3, 2), "tmux 3.2 or newer (server)", v)
 	fe, _ := c.Run("show-options", "-gv", "focus-events")
 	check(strings.TrimSpace(fe) == "on", "focus-events on", "needed to repair Esc and denied prompts when you leave a pane")
-	icon, _ := c.Run("show-options", "-gqv", "@deck_pane_icon")
+	icon, _ := c.Run("show-options", "-gqv", "@ytta_pane_icon")
 	check(strings.TrimSpace(icon) != "", "tmux-init has run", "icons, keys and tmux hooks")
 	hooks, _ := c.Run("show-hooks", "-g")
 	check(strings.Contains(hooks, " focus "), "focus hooks set", "")
 	keys, _ := c.Run("list-keys", "-T", "prefix")
 	check(strings.Contains(keys, " popup") && strings.Contains(keys, "sidebar toggle"), "keys bound",
 		"the popup and sidebar keys; another plugin or a later bind-key may have taken them")
-	if sound, _ := c.Run("show-options", "-gqv", "@deck-sound"); strings.TrimSpace(sound) != "off" {
-		player, _ := c.Run("show-options", "-gqv", "@deck-sound-command")
+	if sound, _ := c.Run("show-options", "-gqv", "@ytta-sound"); strings.TrimSpace(sound) != "off" {
+		player, _ := c.Run("show-options", "-gqv", "@ytta-sound-command")
 		if f := strings.Fields(player); len(f) > 0 {
 			_, err := exec.LookPath(f[0])
-			check(err == nil, "sound player", f[0]+"; set @deck-sound off or @deck-sound-command if it is missing")
+			check(err == nil, "sound player", f[0]+"; set @ytta-sound off or @ytta-sound-command if it is missing")
 		}
 	}
 
@@ -74,9 +74,9 @@ func runDoctor(_ []string) error {
 		}
 		switch {
 		case recording:
-			check(false, "Claude hooks", "recorder installed; run deck install --claude --apply for the live hooks")
+			check(false, "Claude hooks", "recorder installed; run ytta install --claude --apply for the live hooks")
 		case len(missing) > 0:
-			check(false, "Claude hooks", "missing "+strings.Join(missing, ", ")+"; run deck install --claude --apply")
+			check(false, "Claude hooks", "missing "+strings.Join(missing, ", ")+"; run ytta install --claude --apply")
 		default:
 			check(true, "Claude hooks", strconv.Itoa(len(events))+" events")
 		}
@@ -88,20 +88,20 @@ func runDoctor(_ []string) error {
 		_ = json.Unmarshal(settings, &parsed)
 		switch {
 		case parsed.StatusLine != nil && strings.Contains(parsed.StatusLine.Command, install.WrapFlag):
-			check(true, "statusLine", "yours is shown, and the deck records token usage and plan limits from it")
+			check(true, "statusLine", "yours is shown, and ytta records token usage and plan limits from it")
 		case parsed.StatusLine != nil && strings.Contains(parsed.StatusLine.Command, install.Marker):
-			check(true, "statusLine", "the deck records token usage and plan limits")
+			check(true, "statusLine", "ytta records token usage and plan limits")
 		case parsed.StatusLine != nil:
-			check(true, "statusLine", "yours is kept, so token usage and plan limits are not shown; deck install --claude --wrap-statusline --apply keeps yours and records them")
+			check(true, "statusLine", "yours is kept, so token usage and plan limits are not shown; ytta install --claude --wrap-statusline --apply keeps yours and records them")
 		default:
-			check(false, "statusLine", "not set; deck install --claude --apply adds it for usage and plan limits")
+			check(false, "statusLine", "not set; ytta install --claude --apply adds it for usage and plan limits")
 		}
 		if strings.Contains(string(settings), "window-status-style") {
-			check(false, "no old tab coloring hooks", "a hook still sets window-status-style and will fight the deck's icons")
+			check(false, "no old tab coloring hooks", "a hook still sets window-status-style and will fight ytta's icons")
 		}
 	}
 
-	// Other agents are only reported once the deck is installed for them.
+	// Other agents are only reported once ytta is installed for them.
 	if hooksFile, err := os.ReadFile(codexHooksPath()); err == nil {
 		if events, _ := install.Owned(hooksFile); len(events) > 0 {
 			check(true, "Codex hooks", strconv.Itoa(len(events))+" events; they run only once trusted with /hooks in Codex")
@@ -114,8 +114,8 @@ func runDoctor(_ []string) error {
 		}
 	}
 	if plugin, err := os.ReadFile(opencodePluginPath()); err == nil && strings.Contains(string(plugin), install.Marker) {
-		_, statErr := os.Stat(strings.Trim(between(string(plugin), `const DECK = "`, `"`), " "))
-		check(statErr == nil, "opencode plugin", "installed; run deck install --opencode --apply again if the deck has moved")
+		_, statErr := os.Stat(strings.Trim(between(string(plugin), `const YTTA = "`, `"`), " "))
+		check(statErr == nil, "opencode plugin", "installed; run ytta install --opencode --apply again if ytta has moved")
 	}
 
 	dir := store.DefaultDir()

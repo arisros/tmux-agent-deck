@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
-# tpm entrypoint. Picks a deck binary, then lets it configure tmux:
+# tpm entrypoint. Picks a ytta binary, then lets it configure tmux:
 #   1. build from this checkout when a new enough Go is available
 #   2. otherwise download the matching release binary and verify its checksum
 #   3. otherwise keep the binary that is already there
 # A failed update never turns the plugin off: tmux-init runs whenever any
 # usable binary exists.
 #
-# DECK_BUILD=off prefers the release binary even when Go is installed, and
-# DECK_RELEASE_URL points the download at a mirror of the releases.
+# YTTA_BUILD=off prefers the release binary even when Go is installed, and
+# YTTA_RELEASE_URL points the download at a mirror of the releases.
 set -u
 
 dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
-bin="$dir/bin/deck"
+bin="$dir/bin/ytta"
 stamp="$dir/bin/.rev"
 log="$dir/bin/install.log"
 mkdir -p "$dir/bin"
 
-say() { tmux display-message "tmux-agent-deck: $*"; }
+say() { tmux display-message "ytta: $*"; }
 
 version=$(git -C "$dir" describe --tags --always --dirty 2>/dev/null || echo unknown)
 current=$(cat "$stamp" 2>/dev/null || true)
@@ -44,8 +44,8 @@ go_bin() {
 build() {
 	local g
 	g=$(go_bin) || { echo "no go $(awk '/^go /{print $2; exit}' "$dir/go.mod") or newer found" >>"$log"; return 1; }
-	(cd "$dir" && "$g" build -trimpath -ldflags "-s -w -X main.version=$version" -o bin/deck.new ./cmd/deck) >>"$log" 2>&1 &&
-		mv -f "$dir/bin/deck.new" "$bin"
+	(cd "$dir" && "$g" build -trimpath -ldflags "-s -w -X main.version=$version" -o bin/ytta.new ./cmd/ytta) >>"$log" 2>&1 &&
+		mv -f "$dir/bin/ytta.new" "$bin"
 }
 
 # repo is owner/name from the checkout's remote, so forks download their own.
@@ -68,7 +68,7 @@ sha256() {
 download() {
 	local slug tag os arch asset base tmp want got rc
 	slug=$(repo)
-	[ -n "$slug" ] || slug=arisros/tmux-agent-deck
+	[ -n "$slug" ] || slug=arisros/ytta
 	tag=$(git -C "$dir" describe --tags --exact-match 2>/dev/null) ||
 		tag=$(curl -fsSI "https://github.com/$slug/releases/latest" 2>/dev/null |
 			tr -d '\r' | awk -F/ 'tolower($0) ~ /^location:/ {print $NF}')
@@ -79,8 +79,8 @@ download() {
 	arm64 | aarch64) arch=arm64 ;;
 	*) echo "no release binary for $(uname -m)" >>"$log"; return 1 ;;
 	esac
-	asset="tmux-agent-deck_${tag#v}_${os}_${arch}.tar.gz"
-	base="${DECK_RELEASE_URL:-https://github.com/$slug/releases/download}/$tag"
+	asset="ytta_${tag#v}_${os}_${arch}.tar.gz"
+	base="${YTTA_RELEASE_URL:-https://github.com/$slug/releases/download}/$tag"
 	tmp=$(mktemp -d)
 	if ! fetch "$base/$asset" "$tmp/$asset" || ! fetch "$base/checksums.txt" "$tmp/checksums.txt"; then
 		rm -rf "$tmp"
@@ -93,7 +93,7 @@ download() {
 		rm -rf "$tmp"
 		return 1
 	fi
-	tar -xzf "$tmp/$asset" -C "$tmp" deck && mv -f "$tmp/deck" "$bin" && chmod +x "$bin"
+	tar -xzf "$tmp/$asset" -C "$tmp" ytta && mv -f "$tmp/ytta" "$bin" && chmod +x "$bin"
 	rc=$?
 	rm -rf "$tmp"
 	[ $rc -eq 0 ] && version=$tag
@@ -102,7 +102,7 @@ download() {
 
 if [ ! -x "$bin" ] || [ "$current" != "$version" ]; then
 	: >"$log"
-	if { [ "${DECK_BUILD:-on}" != off ] && build; } || download; then
+	if { [ "${YTTA_BUILD:-on}" != off ] && build; } || download; then
 		echo "$version" >"$stamp"
 	elif [ -x "$bin" ]; then
 		say "update failed, still running ${current:-the old build} (see $log)"

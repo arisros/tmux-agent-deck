@@ -16,13 +16,13 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/arisros/tmux-agent-deck/internal/deck"
-	"github.com/arisros/tmux-agent-deck/internal/events"
-	"github.com/arisros/tmux-agent-deck/internal/git"
-	"github.com/arisros/tmux-agent-deck/internal/store"
-	"github.com/arisros/tmux-agent-deck/internal/tmux"
-	"github.com/arisros/tmux-agent-deck/internal/ui"
-	"github.com/arisros/tmux-agent-deck/internal/usage"
+	"github.com/arisros/ytta/internal/events"
+	"github.com/arisros/ytta/internal/git"
+	"github.com/arisros/ytta/internal/store"
+	"github.com/arisros/ytta/internal/tmux"
+	"github.com/arisros/ytta/internal/ui"
+	"github.com/arisros/ytta/internal/usage"
+	"github.com/arisros/ytta/internal/ytta"
 )
 
 // Views reconcile agents that have looked busy this long before drawing, so a
@@ -30,12 +30,12 @@ import (
 const staleAfter = 2 * time.Second
 
 // minSidebarWidth is the narrowest sidebar still readable; below it the
-// sidebar restores @deck-sidebar-width.
+// sidebar restores @ytta-sidebar-width.
 const minSidebarWidth = 20
 
 // agents lists panes once, forgets agents that have exited, repairs stale
 // busy agents, and lists again only when one of those changed something.
-func agents(d *deck.Deck, c tmux.Client, repair bool) ([]tmux.Pane, []ui.Row, *usage.Limits, error) {
+func agents(d *ytta.Ytta, c tmux.Client, repair bool) ([]tmux.Pane, []ui.Row, *usage.Limits, error) {
 	panes, rows, err := listAgents(d, c, repair)
 	if err != nil {
 		return nil, nil, nil, err
@@ -44,7 +44,7 @@ func agents(d *deck.Deck, c tmux.Client, repair bool) ([]tmux.Pane, []ui.Row, *u
 	return panes, ui.Branches(ui.Attach(rows, sessions), git.Branch), limits, nil
 }
 
-func listAgents(d *deck.Deck, c tmux.Client, repair bool) ([]tmux.Pane, []ui.Row, error) {
+func listAgents(d *ytta.Ytta, c tmux.Client, repair bool) ([]tmux.Pane, []ui.Row, error) {
 	panes, err := c.ListPanes()
 	if err != nil {
 		return nil, nil, err
@@ -78,7 +78,7 @@ func runPopup(args []string) (err error) {
 	if len(args) > 0 {
 		return fmt.Errorf("popup takes no arguments")
 	}
-	d, c, err := newDeck()
+	d, c, err := newYtta()
 	if err != nil {
 		return err
 	}
@@ -87,7 +87,7 @@ func runPopup(args []string) (err error) {
 	// as a comment. From inside the popup, tmux resolves the client that
 	// opened it and the pane that client is in.
 	client, current, attention := "", "", false
-	if out, err := c.Run("display-message", "-p", "#{client_name}\t#{pane_id}\t#{@deck-popup-attention}"); err == nil {
+	if out, err := c.Run("display-message", "-p", "#{client_name}\t#{pane_id}\t#{@ytta-popup-attention}"); err == nil {
 		if f := strings.Split(strings.TrimRight(out, "\n"), "\t"); len(f) == 3 {
 			client, current, attention = f[0], f[1], f[2] == "on"
 		}
@@ -96,7 +96,7 @@ func runPopup(args []string) (err error) {
 	if err != nil {
 		return err
 	}
-	// @deck-popup-attention opens the popup on the agents that need you;
+	// @ytta-popup-attention opens the popup on the agents that need you;
 	// "a" still shows the rest.
 	l := &ui.List{All: rows, Current: current, Limits: limits, Attention: attention}
 
@@ -107,12 +107,12 @@ func runPopup(args []string) (err error) {
 	defer t.Close()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	keys, changed := t.Keys(), ui.Watch(ctx, c.Flags(), deck.Signal)
+	keys, changed := t.Keys(), ui.Watch(ctx, c.Flags(), ytta.Signal)
 	tick := time.NewTicker(5 * time.Second)
 	defer tick.Stop()
 	anim := time.NewTicker(250 * time.Millisecond)
 	defer anim.Stop()
-	// After the deck types into a pane, its screen is read once more.
+	// After ytta types into a pane, its screen is read once more.
 	settle := time.NewTimer(time.Hour)
 	defer settle.Stop()
 	shown := ""
@@ -212,7 +212,7 @@ func timeline(r ui.Row) []string {
 	return out
 }
 
-func refresh(d *deck.Deck, c tmux.Client, l *ui.List, repair bool) {
+func refresh(d *ytta.Ytta, c tmux.Client, l *ui.List, repair bool) {
 	sel, had := l.Selected()
 	_, rows, limits, err := agents(d, c, repair)
 	if err != nil {
@@ -242,7 +242,7 @@ func jump(c tmux.Client, client, pane string, switchClient bool) error {
 
 func runSidebar(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: deck sidebar toggle|run|pin --session S [--window W]")
+		return errors.New("usage: ytta sidebar toggle|run|pin --session S [--window W]")
 	}
 	fs := flag.NewFlagSet("sidebar", flag.ContinueOnError)
 	session := fs.String("session", "", "tmux session id")
@@ -266,7 +266,7 @@ func runSidebar(args []string) error {
 }
 
 func sidebarPane(c tmux.Client, session string) string {
-	out, err := c.Run("show-options", "-qv", "-t", session, "@deck_sidebar_pane")
+	out, err := c.Run("show-options", "-qv", "-t", session, "@ytta_sidebar_pane")
 	if err != nil {
 		return ""
 	}
@@ -275,14 +275,14 @@ func sidebarPane(c tmux.Client, session string) string {
 		return ""
 	}
 	if alive, err := c.Run("display-message", "-p", "-t", p, "#{pane_id}"); err != nil || strings.TrimSpace(alive) != p {
-		_, _ = c.Run("set-option", "-u", "-t", session, "@deck_sidebar_pane")
+		_, _ = c.Run("set-option", "-u", "-t", session, "@ytta_sidebar_pane")
 		return ""
 	}
 	return p
 }
 
 func sidebarWidth(c tmux.Client) string {
-	out, _ := c.Run("show-options", "-gqv", "@deck-sidebar-width")
+	out, _ := c.Run("show-options", "-gqv", "@ytta-sidebar-width")
 	if w := strings.TrimSpace(out); w != "" {
 		if _, err := strconv.Atoi(w); err == nil {
 			return w
@@ -291,14 +291,14 @@ func sidebarWidth(c tmux.Client) string {
 	return defaultSidebarWidth
 }
 
-// defaultSidebarWidth is @deck-sidebar-width when the user sets none.
+// defaultSidebarWidth is @ytta-sidebar-width when the user sets none.
 const defaultSidebarWidth = "34"
 
 // One sidebar per session: a single pane that moves to whichever window the
 // session shows, instead of a copy per window.
 func sidebarToggle(c tmux.Client, session, window string) error {
 	if p := sidebarPane(c, session); p != "" {
-		return c.Batch([][]string{{"kill-pane", "-t", p}, {"set-option", "-u", "-t", session, "@deck_sidebar_pane"}})
+		return c.Batch([][]string{{"kill-pane", "-t", p}, {"set-option", "-u", "-t", session, "@ytta_sidebar_pane"}})
 	}
 	if window == "" {
 		return errors.New("--window is required to open the sidebar")
@@ -314,15 +314,15 @@ func sidebarToggle(c tmux.Client, session, window string) error {
 	}
 	p := strings.TrimSpace(out)
 	return c.Batch([][]string{
-		{"set-option", "-p", "-t", p, "@deck_sidebar", "1"},
-		{"set-option", "-t", session, "@deck_sidebar_pane", p},
-		{"set-option", "-t", session, "@deck_sidebar_window", window},
+		{"set-option", "-p", "-t", p, "@ytta_sidebar", "1"},
+		{"set-option", "-t", session, "@ytta_sidebar_pane", p},
+		{"set-option", "-t", session, "@ytta_sidebar_window", window},
 	})
 }
 
 func sidebarRun(c tmux.Client, session string) (err error) {
 	defer logFailure("sidebar", &err)
-	d, err := deck.New(c, store.DefaultDir())
+	d, err := ytta.New(c, store.DefaultDir())
 	if err != nil {
 		return err
 	}
@@ -381,13 +381,13 @@ func sidebarRun(c tmux.Client, session string) (err error) {
 	t.SetTitle("agents")
 	defer func() {
 		_ = c.Batch([][]string{
-			{"set-option", "-u", "-t", session, "@deck_sidebar_pane"},
-			{"set-option", "-u", "-t", session, "@deck_sidebar_window"},
+			{"set-option", "-u", "-t", session, "@ytta_sidebar_pane"},
+			{"set-option", "-u", "-t", session, "@ytta_sidebar_window"},
 		})
 	}()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	keys, changed := t.Keys(), ui.Watch(ctx, c.Flags(), deck.Signal)
+	keys, changed := t.Keys(), ui.Watch(ctx, c.Flags(), ytta.Signal)
 	winch := make(chan os.Signal, 1)
 	signal.Notify(winch, syscall.SIGWINCH)
 	// tmux ends a killed pane with SIGHUP. Returning runs the same cleanup
@@ -461,7 +461,7 @@ func sidebarRun(c tmux.Client, session string) (err error) {
 }
 
 // leaveEmptyWindow runs when the sidebar is the only pane left in its window,
-// so the window would otherwise stay open showing just the deck. It moves to
+// so the window would otherwise stay open showing just ytta. It moves to
 // the window tmux falls back to, which lets the empty one close; in the
 // session's last window it closes itself, and the window closes as usual.
 func leaveEmptyWindow(c tmux.Client, session, self string) (bool, error) {
@@ -484,7 +484,7 @@ func leaveEmptyWindow(c tmux.Client, session, self string) (bool, error) {
 	}
 	// The last step records the layout of the window left behind, which
 	// closes as soon as the sidebar is gone: judge by where the sidebar is.
-	_, _ = c.Run("run-shell", "-t", target, "-C", "#{E:@deck_follow}")
+	_, _ = c.Run("run-shell", "-t", target, "-C", "#{E:@ytta_follow}")
 	if out, err := c.Run("display-message", "-p", "-t", self, "#{window_id}"); err != nil || strings.TrimSpace(out) != target {
 		return false, fmt.Errorf("sidebar did not move to %s", target)
 	}
@@ -499,7 +499,7 @@ func runList(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	d, c, err := newDeck()
+	d, c, err := newYtta()
 	if err != nil {
 		return err
 	}
@@ -624,7 +624,7 @@ func pinOnce(c tmux.Client, session string) (time.Duration, error) {
 	// pane is shorter than its window, and comparing heights made every
 	// check fail, so the pin re-ran on its own layout change forever.
 	out, err := c.Run("display-message", "-p", "-t", p,
-		"#{window_id} #{pane_at_left} #{pane_at_top} #{pane_at_bottom} #{@deck_pinned_at}")
+		"#{window_id} #{pane_at_left} #{pane_at_top} #{pane_at_bottom} #{@ytta_pinned_at}")
 	if err != nil {
 		return 0, err
 	}
@@ -646,7 +646,7 @@ func pinOnce(c tmux.Client, session string) (time.Duration, error) {
 		}
 	}
 	window := f[0]
-	if _, err := c.Run("set-option", "-p", "-t", p, "@deck_pinned_at", strconv.FormatInt(now, 10)); err != nil {
+	if _, err := c.Run("set-option", "-p", "-t", p, "@ytta_pinned_at", strconv.FormatInt(now, 10)); err != nil {
 		return 0, err
 	}
 	logView("pin "+p+" back to the left of "+window, nil)
@@ -658,7 +658,7 @@ func pinOnce(c tmux.Client, session string) (time.Duration, error) {
 	}
 	join := [][]string{
 		{"join-pane", "-d", "-f", "-h", "-b", "-l", sidebarWidth(c), "-s", p, "-t", window},
-		{"set-option", "-t", session, "@deck_sidebar_window", window},
+		{"set-option", "-t", session, "@ytta_sidebar_window", window},
 	}
 	if err := c.Batch(join); err == nil {
 		return 0, nil
@@ -667,7 +667,7 @@ func pinOnce(c tmux.Client, session string) (time.Duration, error) {
 		// The sidebar now sits alone in the window break-pane made. Record
 		// where it is, so the follow hook moves it on the next switch.
 		out, _ := c.Run("display-message", "-p", "-t", p, "#{window_id}")
-		_, _ = c.Run("set-option", "-t", session, "@deck_sidebar_window", strings.TrimSpace(out))
+		_, _ = c.Run("set-option", "-t", session, "@ytta_sidebar_window", strings.TrimSpace(out))
 		logView("pin "+p+" failed to rejoin "+window+": "+err.Error(), nil)
 		return 0, err
 	}
@@ -694,6 +694,6 @@ func lockFile(path string) (func(), error) {
 }
 
 func pinEnabled(c tmux.Client) bool {
-	out, _ := c.Run("show-options", "-gqv", "@deck-sidebar-pin")
+	out, _ := c.Run("show-options", "-gqv", "@ytta-sidebar-pin")
 	return strings.TrimSpace(out) != "off"
 }

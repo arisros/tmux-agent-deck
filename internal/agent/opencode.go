@@ -3,25 +3,25 @@ package agent
 import (
 	_ "embed" // the plugin source below
 
-	"github.com/arisros/tmux-agent-deck/internal/hook"
-	"github.com/arisros/tmux-agent-deck/internal/machine"
+	"github.com/arisros/ytta/internal/hook"
+	"github.com/arisros/ytta/internal/machine"
 )
 
 // OpenCode is opencode. It has no hook commands: a plugin file inside
-// opencode listens to its events and runs `deck hook` for each, with a
+// opencode listens to its events and runs `ytta hook` for each, with a
 // payload in the shape the other agents send. Unlike them it reports a
 // denied permission, and an aborted turn as an error.
 //
 // The plugin and the mapping come from opencode's plugin API and event
-// types, not yet from recorded sessions, and the deck reads no opencode
+// types, not yet from recorded sessions, and ytta reads no opencode
 // screens.
 var OpenCode = Agent{
 	Name: "opencode",
 	Map:  mapOpenCode,
 }
 
-// OpenCodePlugin is the plugin's source. __DECK__ stands for the path of the
-// deck binary, filled in when it is installed.
+// OpenCodePlugin is the plugin's source. __YTTA__ stands for the path of the
+// ytta binary, filled in when it is installed.
 //
 //go:embed opencode-plugin.js
 var OpenCodePlugin string

@@ -17,8 +17,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/arisros/tmux-agent-deck/internal/hook"
-	"github.com/arisros/tmux-agent-deck/internal/store"
+	"github.com/arisros/ytta/internal/hook"
+	"github.com/arisros/ytta/internal/store"
 )
 
 // Entry is one redacted hook event.

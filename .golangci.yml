@@ -1,4 +1,4 @@
-# golangci-lint configuration for tmux-agent-deck, adapted from fate's.
+# golangci-lint configuration for ytta, adapted from fate's.
 # The headline rule: every exported symbol must be documented.
 #
 # Schema v2 (golangci-lint v2.x). errcheck, govet, ineffassign, staticcheck and
@@ -63,7 +63,7 @@ formatters:
   settings:
     goimports:
       local-prefixes:
-        - github.com/arisros/tmux-agent-deck
+        - github.com/arisros/ytta
   exclusions:
     generated: lax
     paths:

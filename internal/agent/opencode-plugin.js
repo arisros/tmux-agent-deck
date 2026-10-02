@@ -1,15 +1,15 @@
-// tmux-agent-deck: reports this opencode's sessions to the deck, the tmux
-// plugin that shows which agents need you. Written by `deck install
-// --opencode` and removed by `deck uninstall --opencode`; edits are lost.
+// ytta: reports this opencode's sessions to ytta, the tmux
+// plugin that shows which agents need you. Written by `ytta install
+// --opencode` and removed by `ytta uninstall --opencode`; edits are lost.
 import { spawn } from "node:child_process"
 
-const DECK = "__DECK__"
+const YTTA = "__YTTA__"
 
 // Sessions the task tool started. Their events say nothing about the turn
 // the user is waiting on.
 const children = new Set()
 
-// One `deck hook` at a time, in the order the events happened: the deck's
+// One `ytta hook` at a time, in the order the events happened: ytta's
 // state machine needs them in order, and opencode never waits for it.
 let queue = Promise.resolve()
 
@@ -18,7 +18,7 @@ function run(args, payload) {
     () =>
       new Promise((done) => {
         try {
-          const p = spawn(DECK, args, { stdio: ["pipe", "ignore", "ignore"] })
+          const p = spawn(YTTA, args, { stdio: ["pipe", "ignore", "ignore"] })
           p.on("error", done)
           p.on("close", done)
           p.stdin.on("error", () => {})
@@ -67,7 +67,7 @@ function usage(sessionID) {
   run(["usage"], total)
 }
 
-export const TmuxAgentDeck = async () => ({
+export const Ytta = async () => ({
   event: async ({ event }) => {
     const p = event.properties ?? {}
     const id = p.sessionID ?? p.info?.id

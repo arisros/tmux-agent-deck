@@ -40,10 +40,10 @@ const settings = `{
 }
 `
 
-var deck = Hook{Command: "/Users/x/tmux-agent-deck/bin/deck hook --record", Async: true, Timeout: 5}
+var ytta = Hook{Command: "/Users/x/ytta/bin/ytta hook --record", Async: true, Timeout: 5}
 
 func TestAddThenRemoveRoundTrips(t *testing.T) {
-	added, err := Add([]byte(settings), []string{"Stop", "SessionEnd"}, deck)
+	added, err := Add([]byte(settings), []string{"Stop", "SessionEnd"}, ytta)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestAddThenRemoveRoundTrips(t *testing.T) {
 }
 
 func TestAddKeepsForeignHooksAndOrder(t *testing.T) {
-	out, err := Add([]byte(settings), []string{"PreToolUse", "SessionEnd"}, deck)
+	out, err := Add([]byte(settings), []string{"PreToolUse", "SessionEnd"}, ytta)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,8 +86,8 @@ func TestAddKeepsForeignHooksAndOrder(t *testing.T) {
 	if len(pre) != 2 || pre[0].Matcher != "Bash" || pre[0].Hooks[0].Command != "rtk hook claude" {
 		t.Errorf("foreign PreToolUse group disturbed: %+v", pre)
 	}
-	if got := pre[1].Hooks[0]; got.Command != deck.Command || !got.Async || got.Timeout != 5 {
-		t.Errorf("deck entry = %+v", got)
+	if got := pre[1].Hooks[0]; got.Command != ytta.Command || !got.Async || got.Timeout != 5 {
+		t.Errorf("ytta entry = %+v", got)
 	}
 	if len(parsed.Hooks["SessionEnd"]) != 1 {
 		t.Errorf("SessionEnd not added: %+v", parsed.Hooks["SessionEnd"])
@@ -95,11 +95,11 @@ func TestAddKeepsForeignHooksAndOrder(t *testing.T) {
 }
 
 func TestAddIsIdempotent(t *testing.T) {
-	once, err := Add([]byte(settings), []string{"Stop"}, deck)
+	once, err := Add([]byte(settings), []string{"Stop"}, ytta)
 	if err != nil {
 		t.Fatal(err)
 	}
-	twice, err := Add(once, []string{"Stop"}, deck)
+	twice, err := Add(once, []string{"Stop"}, ytta)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,8 +108,8 @@ func TestAddIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestRemoveOnlyTouchesDeckEntriesInSharedGroup(t *testing.T) {
-	shared := `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"afplay x"},{"type":"command","command":"/p/tmux-agent-deck/bin/deck hook"}]}]}}`
+func TestRemoveOnlyTouchesYttaEntriesInSharedGroup(t *testing.T) {
+	shared := `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"afplay x"},{"type":"command","command":"/p/ytta/bin/ytta hook"}]}]}}`
 	out, err := Remove([]byte(shared))
 	if err != nil {
 		t.Fatal(err)
@@ -121,7 +121,7 @@ func TestRemoveOnlyTouchesDeckEntriesInSharedGroup(t *testing.T) {
 
 func TestAddToEmptyOrHooklessFile(t *testing.T) {
 	for _, in := range []string{"", "{}", `{"model":"opus"}`} {
-		out, err := Add([]byte(in), []string{"Stop"}, deck)
+		out, err := Add([]byte(in), []string{"Stop"}, ytta)
 		if err != nil {
 			t.Fatalf("%q: %v", in, err)
 		}
@@ -145,7 +145,7 @@ func TestRejectsNonObject(t *testing.T) {
 }
 
 func TestStatusLineTakesOnlyAFreeSlot(t *testing.T) {
-	cmd := "/p/tmux-agent-deck/bin/deck statusline"
+	cmd := "/p/ytta/bin/ytta statusline"
 	out, owned, err := SetStatusLine([]byte(settings), cmd)
 	if err != nil || !owned || !strings.Contains(string(out), cmd) {
 		t.Fatalf("free slot not taken: %v %v\n%s", owned, err, out)
@@ -156,7 +156,7 @@ func TestStatusLineTakesOnlyAFreeSlot(t *testing.T) {
 	}
 	mine := `{"statusLine":{"type":"command","command":"~/bin/my-line"}}`
 	out, owned, _ = SetStatusLine([]byte(mine), cmd)
-	if owned || strings.Contains(string(out), "deck") {
+	if owned || strings.Contains(string(out), "ytta") {
 		t.Errorf("replaced the user's own status line:\n%s", out)
 	}
 	if out, _ := RemoveStatusLine([]byte(mine)); !strings.Contains(string(out), "my-line") {
@@ -166,7 +166,7 @@ func TestStatusLineTakesOnlyAFreeSlot(t *testing.T) {
 
 func TestWrapKeepsTheUsersStatusLineAndRestoresIt(t *testing.T) {
 	mine := "{\n  \"statusLine\": {\n    \"type\": \"command\",\n    \"command\": \"~/bin/my-line --color 'a b' \\\"$HOME\\\"\",\n    \"padding\": 2\n  }\n}\n"
-	wrap := func(b64 string) string { return "/p/deck statusline " + WrapFlag + " " + b64 + " # " + Marker }
+	wrap := func(b64 string) string { return "/p/ytta statusline " + WrapFlag + " " + b64 + " # " + Marker }
 	out, ok, err := WrapStatusLine([]byte(mine), wrap)
 	if err != nil || !ok {
 		t.Fatalf("not wrapped: %v %v", ok, err)
@@ -187,7 +187,7 @@ func TestWrapKeepsTheUsersStatusLineAndRestoresIt(t *testing.T) {
 }
 
 func TestRemoveLeavesNoEmptyHooks(t *testing.T) {
-	added, err := Add([]byte(`{"model":"opus"}`), []string{"Stop"}, deck)
+	added, err := Add([]byte(`{"model":"opus"}`), []string{"Stop"}, ytta)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,12 +202,12 @@ func TestRemoveLeavesNoEmptyHooks(t *testing.T) {
 
 // Commands are found by the trailing marker, wherever the binary lives.
 func TestMarkerFindsCommandsAtAnyPath(t *testing.T) {
-	h := Hook{Command: "test -x /usr/local/bin/deck && /usr/local/bin/deck hook; exit 0 # tmux-agent-deck"}
+	h := Hook{Command: "test -x /usr/local/bin/ytta && /usr/local/bin/ytta hook; exit 0 # ytta"}
 	added, err := Add([]byte("{}"), []string{"Stop"}, h)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out, _ := Remove(added); strings.Contains(string(out), "deck hook") {
+	if out, _ := Remove(added); strings.Contains(string(out), "ytta hook") {
 		t.Errorf("not removed:\n%s", out)
 	}
 }
