@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.3.0](https://github.com/arisros/ytta/compare/v0.2.0...v0.3.0) (2026-10-02)
+
+
+### ⚠ BREAKING CHANGES
+
+* the binary is `ytta` and the plugin is `arisros/ytta`. Options and formats are `@ytta-*` and `@ytta_*`, environment variables are `YTTA_*`, state lives in `~/.local/state/ytta`, hook entries carry the marker `# ytta`, the opencode plugin is `ytta.js`, and release archives are `ytta_<version>_<os>_<arch>.tar.gz`. Uninstall with the old `deck` binary before switching; the README has the steps.
+
+### Changed
+
+* rename tmux-agent-deck to ytta ([#12](https://github.com/arisros/ytta/issues/12)) ([48e218a](https://github.com/arisros/ytta/commit/48e218a02c3c1c2f2b1d10efe50ce6be9747af79))
+
 ## [0.2.0](https://github.com/arisros/tmux-agent-deck/compare/v0.1.3...v0.2.0) (2026-10-01)
 
 
