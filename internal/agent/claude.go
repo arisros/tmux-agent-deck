@@ -4,9 +4,9 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/arisros/tmux-agent-deck/internal/hook"
-	"github.com/arisros/tmux-agent-deck/internal/machine"
-	"github.com/arisros/tmux-agent-deck/internal/tmux"
+	"github.com/arisros/ytta/internal/hook"
+	"github.com/arisros/ytta/internal/machine"
+	"github.com/arisros/ytta/internal/tmux"
 )
 
 // Claude is Claude Code: hooks in its settings file, screen markers for the

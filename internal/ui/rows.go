@@ -12,9 +12,9 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/arisros/tmux-agent-deck/internal/machine"
-	"github.com/arisros/tmux-agent-deck/internal/tmux"
-	"github.com/arisros/tmux-agent-deck/internal/usage"
+	"github.com/arisros/ytta/internal/machine"
+	"github.com/arisros/ytta/internal/tmux"
+	"github.com/arisros/ytta/internal/usage"
 )
 
 // Row is one agent.
@@ -29,7 +29,7 @@ type Row struct {
 }
 
 // Attach joins each row to the usage its Claude session reported: by session
-// id when the deck has one, otherwise by the pane Claude reported from, most
+// id when ytta has one, otherwise by the pane Claude reported from, most
 // recent report first (a pane can host several sessions over time).
 func Attach(rows []Row, sessions map[string]usage.Session) []Row {
 	byPane := map[string]usage.Session{}
@@ -168,7 +168,7 @@ func (r Row) Target() string { return r.Session + ":" + r.Window + "." + r.Index
 
 var priority = map[string]int{machine.Waiting: 0, machine.Done: 1, machine.Running: 2, machine.Idle: 3}
 
-// Agents keeps the panes that run a live agent the deck knows about, most
+// Agents keeps the panes that run a live agent ytta knows about, most
 // urgent first, and within waiting and done the longest wait first. A pane whose agent died keeps its options until a view sweeps
 // it, so the liveness check is what hides it.
 func Agents(panes []tmux.Pane, now time.Time) []Row {

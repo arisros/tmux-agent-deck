@@ -31,26 +31,26 @@ func TestLifecycleAndFormats(t *testing.T) {
 	}
 	for _, s := range steps {
 		h.hook(a, s.event, s.extra)
-		if got := h.opt(a, "@deck_state"); got != s.state {
+		if got := h.opt(a, "@ytta_state"); got != s.state {
 			t.Fatalf("after %s: state %q, want %q", s.event, got, s.state)
 		}
-		if icon := h.opt(a, "E:@deck_pane_icon"); !strings.Contains(icon, s.icon) {
+		if icon := h.opt(a, "E:@ytta_pane_icon"); !strings.Contains(icon, s.icon) {
 			t.Errorf("after %s: pane icon %q lacks %s", s.event, icon, s.icon)
 		}
 	}
-	if icon := h.opt(a, "E:@deck_window_icon"); !strings.Contains(icon, "✔") {
+	if icon := h.opt(a, "E:@ytta_window_icon"); !strings.Contains(icon, "✔") {
 		// Everything the icon is computed from, and what moved the state.
 		t.Errorf("window icon %q lacks ✔\npanes: %s\nicon again: %q\nevents:\n%s", icon,
-			h.opt(a, "P:[#{pane_id} cmd=#{pane_current_command} remembered=#{@deck_cmd} alive=#{E:@deck_alive} state=#{@deck_state}] "),
-			h.opt(a, "E:@deck_window_icon"), h.deck("", "events"))
+			h.opt(a, "P:[#{pane_id} cmd=#{pane_current_command} remembered=#{@ytta_cmd} alive=#{E:@ytta_alive} state=#{@ytta_state}] "),
+			h.opt(a, "E:@ytta_window_icon"), h.ytta("", "events"))
 	}
 
-	// Selecting the pane runs the tmux hook, which runs `deck focus`.
+	// Selecting the pane runs the tmux hook, which runs `ytta focus`.
 	h.tmux("select-pane", "-t", a)
-	h.eventually(func() bool { return h.opt(a, "@deck_state") == "idle" }, "focus to clear done")
+	h.eventually(func() bool { return h.opt(a, "@ytta_state") == "idle" }, "focus to clear done")
 
 	h.hook(a, "SessionEnd", `,"reason":"prompt_input_exit"`)
-	if got := h.opt(a, "@deck_state"); got != "" {
+	if got := h.opt(a, "@ytta_state"); got != "" {
 		t.Errorf("state after SessionEnd = %q", got)
 	}
 }
@@ -61,23 +61,23 @@ func TestReasonAndEventLog(t *testing.T) {
 	h.hook(a, "SessionStart", `,"source":"startup"`)
 	h.hook(a, "UserPromptSubmit", "")
 	h.hook(a, "PermissionRequest", `,"tool_name":"Bash","tool_input":{"command":"kubectl delete ns prod"}`)
-	if got := h.opt(a, "@deck_reason"); got != "permission Bash" {
+	if got := h.opt(a, "@ytta_reason"); got != "permission Bash" {
 		t.Fatalf("reason = %q, want permission Bash", got)
 	}
-	if out := h.deck("", "list"); !strings.Contains(out, "waiting (permission Bash)") {
+	if out := h.ytta("", "list"); !strings.Contains(out, "waiting (permission Bash)") {
 		t.Errorf("list does not say why:\n%s", out)
 	}
 	h.hook(a, "PostToolUse", "")
-	if got := h.opt(a, "@deck_reason"); got != "" {
+	if got := h.opt(a, "@ytta_reason"); got != "" {
 		t.Errorf("reason = %q after the approval, want none", got)
 	}
 	h.hook(a, "PermissionRequest", `,"tool_name":"AskUserQuestion"`)
-	if got := h.opt(a, "@deck_reason"); got != "question" {
+	if got := h.opt(a, "@ytta_reason"); got != "question" {
 		t.Errorf("reason = %q, want question", got)
 	}
 	h.hook(a, "SessionEnd", "")
 
-	out := h.deck("", "events", "--pane", a)
+	out := h.ytta("", "events", "--pane", a)
 	for _, want := range []string{
 		"idle -> idle", "idle -> running", "running -> waiting", "permission Bash",
 		"waiting -> running", "question", "End",
@@ -89,7 +89,7 @@ func TestReasonAndEventLog(t *testing.T) {
 	if strings.Contains(out, "kubectl") {
 		t.Errorf("a tool argument reached the event log:\n%s", out)
 	}
-	if lines := strings.Count(strings.TrimSpace(h.deck("", "events", "--pane", a, "--json")), "\n") + 1; lines != 6 {
+	if lines := strings.Count(strings.TrimSpace(h.ytta("", "events", "--pane", a, "--json")), "\n") + 1; lines != 6 {
 		t.Errorf("%d JSON events, want 6", lines)
 	}
 }
@@ -101,7 +101,7 @@ func TestNotifyCommand(t *testing.T) {
 	if err := os.WriteFile(script, []byte("#!/bin/sh\necho \"$@\" >> "+out+"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	h.tmux("set-option", "-g", "@deck-notify-command", script)
+	h.tmux("set-option", "-g", "@ytta-notify-command", script)
 	a := h.agent("alpha")
 	h.hook(a, "UserPromptSubmit", "")
 	h.hook(a, "PermissionRequest", `,"tool_name":"Bash"`)
@@ -120,7 +120,7 @@ func TestWindowIconPrefersMostUrgent(t *testing.T) {
 	h.hook(a, "UserPromptSubmit", "")
 	h.hook(b, "UserPromptSubmit", "")
 	h.hook(b, "PermissionRequest", "")
-	if icon := h.opt(a, "E:@deck_window_icon"); !strings.Contains(icon, "◆") || strings.Contains(icon, "●") {
+	if icon := h.opt(a, "E:@ytta_window_icon"); !strings.Contains(icon, "◆") || strings.Contains(icon, "●") {
 		t.Errorf("window icon %q, want only the waiting glyph", icon)
 	}
 }
@@ -131,36 +131,36 @@ func TestDeadAgentHidden(t *testing.T) {
 	h.hook(a, "UserPromptSubmit", "")
 	h.tmux("respawn-pane", "-k", "-t", a, "sleep 100000")
 	h.eventually(func() bool { return h.opt(a, "pane_current_command") == "sleep" }, "claude replaced")
-	if icon := h.opt(a, "E:@deck_pane_icon"); icon != "" {
+	if icon := h.opt(a, "E:@ytta_pane_icon"); icon != "" {
 		t.Errorf("dead agent still shows %q", icon)
 	}
-	if out := h.deck("", "list"); strings.Contains(out, "running") {
+	if out := h.ytta("", "list"); strings.Contains(out, "running") {
 		t.Errorf("dead agent listed:\n%s", out)
 	}
 	// Listing swept it: nothing of the agent is left on the pane.
-	for _, o := range []string{"@deck_state", "@deck_sid", "@deck_cmd"} {
+	for _, o := range []string{"@ytta_state", "@ytta_sid", "@ytta_cmd"} {
 		if got := h.opt(a, o); got != "" {
 			t.Errorf("%s = %q after the agent exited", o, got)
 		}
 	}
-	if out := h.deck("", "events", "--pane", a); !strings.Contains(out, "Exit") {
+	if out := h.ytta("", "events", "--pane", a); !strings.Contains(out, "Exit") {
 		t.Errorf("the exit is not in the event log:\n%s", out)
 	}
 }
 
-// An agent started through a wrapper has a process name the deck cannot
+// An agent started through a wrapper has a process name ytta cannot
 // know. It is tracked by the command its pane ran when its hooks fired.
-// A pane the deck never heard from has no remembered command; that must not
+// A pane ytta never heard from has no remembered command; that must not
 // read as "unchanged" just because both sides are empty.
 func TestPaneWithoutARememberedCommandIsNotAlive(t *testing.T) {
 	h := newHarness(t)
 	a := h.tmux("split-window", "-d", "-t", "alpha", "-P", "-F", "#{pane_id}", "sleep 100000")
 	h.eventually(func() bool { return h.opt(a, "pane_current_command") == "sleep" }, "plain pane running")
-	if got := h.opt(a, "E:@deck_alive"); got != "0" {
+	if got := h.opt(a, "E:@ytta_alive"); got != "0" {
 		t.Errorf("alive = %q for a pane with no agent", got)
 	}
-	h.tmux("set-option", "-p", "-t", a, "@deck_cmd", "sleep")
-	if got := h.opt(a, "E:@deck_alive"); got != "1" {
+	h.tmux("set-option", "-p", "-t", a, "@ytta_cmd", "sleep")
+	if got := h.opt(a, "E:@ytta_alive"); got != "1" {
 		t.Errorf("alive = %q once the command is remembered", got)
 	}
 }
@@ -170,21 +170,21 @@ func TestAgentBehindAWrapperIsTracked(t *testing.T) {
 	a := h.tmux("split-window", "-d", "-t", "alpha", "-P", "-F", "#{pane_id}", "sleep 100000")
 	h.eventually(func() bool { return h.opt(a, "pane_current_command") == "sleep" }, "wrapper running")
 	h.hook(a, "UserPromptSubmit", "")
-	if got := h.opt(a, "@deck_cmd"); got != "sleep" {
-		t.Fatalf("@deck_cmd = %q, want the pane's command", got)
+	if got := h.opt(a, "@ytta_cmd"); got != "sleep" {
+		t.Fatalf("@ytta_cmd = %q, want the pane's command", got)
 	}
-	if icon := h.opt(a, "E:@deck_pane_icon"); !strings.Contains(icon, "●") {
+	if icon := h.opt(a, "E:@ytta_pane_icon"); !strings.Contains(icon, "●") {
 		t.Errorf("pane icon %q lacks the running dot", icon)
 	}
-	if out := h.deck("", "list"); !strings.Contains(out, "running") {
+	if out := h.ytta("", "list"); !strings.Contains(out, "running") {
 		t.Errorf("wrapped agent not listed:\n%s", out)
 	}
 	h.tmux("respawn-pane", "-k", "-t", a, "cat")
 	h.eventually(func() bool { return h.opt(a, "pane_current_command") == "cat" }, "wrapper replaced")
-	if icon := h.opt(a, "E:@deck_pane_icon"); icon != "" {
+	if icon := h.opt(a, "E:@ytta_pane_icon"); icon != "" {
 		t.Errorf("exited agent still shows %q", icon)
 	}
-	if out := h.deck("", "list"); strings.Contains(out, "running") {
+	if out := h.ytta("", "list"); strings.Contains(out, "running") {
 		t.Errorf("exited agent listed:\n%s", out)
 	}
 }
@@ -197,16 +197,16 @@ func TestReconcileFromScreen(t *testing.T) {
 	h.eventually(func() bool { return h.opt(idle, "pane_current_command") == "2.1.999" }, "fake claude")
 	h.hook(idle, "UserPromptSubmit", "")
 	h.hook(idle, "PermissionRequest", "")
-	h.deck("", "reconcile", idle)
-	if got := h.opt(idle, "@deck_state"); got != "idle" {
+	h.ytta("", "reconcile", idle)
+	if got := h.opt(idle, "@ytta_state"); got != "idle" {
 		t.Errorf("state = %q, want idle after the screen shows the prompt", got)
 	}
 
 	// A blank screen is not evidence of anything: leave the state alone.
 	blank := h.agent("alpha")
 	h.hook(blank, "UserPromptSubmit", "")
-	h.deck("", "reconcile", blank)
-	if got := h.opt(blank, "@deck_state"); got != "running" {
+	h.ytta("", "reconcile", blank)
+	if got := h.opt(blank, "@ytta_state"); got != "running" {
 		t.Errorf("state = %q, want running kept", got)
 	}
 }
@@ -218,8 +218,8 @@ func TestSidebarFollowsWindows(t *testing.T) {
 	sess := h.opt("alpha", "session_id")
 	w1 := h.opt("alpha", "window_id")
 
-	h.deck("", "sidebar", "toggle", "--session", sess, "--window", w1)
-	sb := h.tmux("show-options", "-qv", "-t", "alpha", "@deck_sidebar_pane")
+	h.ytta("", "sidebar", "toggle", "--session", sess, "--window", w1)
+	sb := h.tmux("show-options", "-qv", "-t", "alpha", "@ytta_sidebar_pane")
 	if sb == "" {
 		t.Fatal("no sidebar pane recorded")
 	}
@@ -239,8 +239,8 @@ func TestSidebarFollowsWindows(t *testing.T) {
 	h.tmux("select-window", "-t", w2)
 	h.eventually(func() bool { return h.opt(sb, "window_id") == w2 }, "sidebar to follow a second time")
 
-	h.deck("", "sidebar", "toggle", "--session", sess)
-	h.eventually(func() bool { return h.tmux("show-options", "-qv", "-t", "alpha", "@deck_sidebar_pane") == "" }, "sidebar closed")
+	h.ytta("", "sidebar", "toggle", "--session", sess)
+	h.eventually(func() bool { return h.tmux("show-options", "-qv", "-t", "alpha", "@ytta_sidebar_pane") == "" }, "sidebar closed")
 }
 
 func TestPopupListsAndJumps(t *testing.T) {
@@ -251,7 +251,7 @@ func TestPopupListsAndJumps(t *testing.T) {
 	h.hook(a, "PermissionRequest", "")
 	h.tmux("select-pane", "-t", first)
 
-	h.tmux("set-environment", "-g", "DECK_TMUX_SOCKET", h.socket)
+	h.tmux("set-environment", "-g", "YTTA_TMUX_SOCKET", h.socket)
 	popup := h.tmux("new-window", "-d", "-P", "-F", "#{pane_id}", h.bin+" popup")
 	var screen string
 	for i := 0; i < 100; i++ {
@@ -282,8 +282,8 @@ func TestSidebarCoexistsWithStickyPane(t *testing.T) {
 	h.tmux("set-hook", "-g", "session-window-changed[0]",
 		`run-shell "tmux -L `+h.socket+` join-pane -d -f -h -b -l 20 -s `+sticky+` -t #{window_id}"`)
 
-	h.deck("", "sidebar", "toggle", "--session", sess, "--window", w1)
-	sb := h.tmux("show-options", "-qv", "-t", "alpha", "@deck_sidebar_pane")
+	h.ytta("", "sidebar", "toggle", "--session", sess, "--window", w1)
+	sb := h.tmux("show-options", "-qv", "-t", "alpha", "@ytta_sidebar_pane")
 	w2 := h.tmux("new-window", "-d", "-t", "alpha", "-P", "-F", "#{window_id}", "sleep 100000")
 	h.tmux("select-window", "-t", w2)
 
@@ -307,15 +307,15 @@ func TestSidebarFollowKeepsPaneWidths(t *testing.T) {
 	w2 := h.tmux("new-window", "-d", "-t", "alpha", "-P", "-F", "#{window_id}", "sleep 100000")
 	h.tmux("split-window", "-d", "-h", "-t", w2, "sleep 100000")
 
-	h.deck("", "sidebar", "toggle", "--session", sess, "--window", w1)
-	sb := h.tmux("show-options", "-qv", "-t", "alpha", "@deck_sidebar_pane")
+	h.ytta("", "sidebar", "toggle", "--session", sess, "--window", w1)
+	sb := h.tmux("show-options", "-qv", "-t", "alpha", "@ytta_sidebar_pane")
 	widths := func(w string) string {
 		return h.tmux("list-panes", "-t", w, "-F", "#{?#{==:#{pane_id},"+sb+"},sb,#{pane_width}}")
 	}
 	follow := func(w string) {
 		h.tmux("select-window", "-t", w)
 		h.eventually(func() bool {
-			return h.tmux("show-options", "-qv", "-t", "alpha", "@deck_sidebar_window") == w
+			return h.tmux("show-options", "-qv", "-t", "alpha", "@ytta_sidebar_window") == w
 		}, "sidebar to follow to "+w)
 	}
 
@@ -342,17 +342,17 @@ func TestSidebarFollowKeepsPaneWidths(t *testing.T) {
 	}
 }
 
-// An agent that was idle when the deck was installed has fired no hook, yet
+// An agent that was idle when ytta was installed has fired no hook, yet
 // must be listed.
 func TestAgentsWithoutHooksAreDiscovered(t *testing.T) {
 	h := newHarness(t)
 	quiet := h.tmux("split-window", "-d", "-t", "alpha", "-P", "-F", "#{pane_id}",
 		`printf '❯ \n  ⏸ manual mode on · ? for shortcuts\n'; exec `+h.fake)
 	h.eventually(func() bool { return h.opt(quiet, "pane_current_command") == "2.1.999" }, "fake claude")
-	if out := h.deck("", "list"); !strings.Contains(out, "idle") {
+	if out := h.ytta("", "list"); !strings.Contains(out, "idle") {
 		t.Fatalf("quiet agent not listed:\n%s", out)
 	}
-	if got := h.opt(quiet, "@deck_state"); got != "idle" {
+	if got := h.opt(quiet, "@ytta_state"); got != "idle" {
 		t.Errorf("state = %q, want idle published for the tab and border", got)
 	}
 }
@@ -367,8 +367,8 @@ func TestSidebarLeavesAnEmptyWindow(t *testing.T) {
 	h.tmux("select-window", "-t", w2)
 	work := h.opt(w2, "pane_id")
 
-	h.deck("", "sidebar", "toggle", "--session", sess, "--window", w2)
-	sb := h.tmux("show-options", "-qv", "-t", "alpha", "@deck_sidebar_pane")
+	h.ytta("", "sidebar", "toggle", "--session", sess, "--window", w2)
+	sb := h.tmux("show-options", "-qv", "-t", "alpha", "@ytta_sidebar_pane")
 	h.eventually(func() bool { return strings.Contains(h.tmux("capture-pane", "-p", "-t", sb), "agents") }, "sidebar to draw")
 
 	h.tmux("kill-pane", "-t", work)
@@ -391,13 +391,13 @@ func TestSidebarLeavesAnEmptyWindow(t *testing.T) {
 	}, "the sidebar to close with the session's last window")
 }
 
-// Claude runs the deck's statusLine; its usage and plan limits reach the views.
+// Claude runs ytta's statusLine; its usage and plan limits reach the views.
 func TestStatusLineFeedsTheViews(t *testing.T) {
 	h := newHarness(t)
 	a := h.agent("alpha")
 	h.hook(a, "UserPromptSubmit", "")
 	sid := "sess-" + strings.TrimPrefix(a, "%")
-	line := h.deck(`{"session_id":"`+sid+`","model":{"display_name":"Opus 5.5"},
+	line := h.ytta(`{"session_id":"`+sid+`","model":{"display_name":"Opus 5.5"},
 		"cost":{"total_cost_usd":1.25},
 		"context_window":{"total_input_tokens":120000,"total_output_tokens":8000,"used_percentage":42},
 		"rate_limits":{"five_hour":{"used_percentage":31,"resets_at":4102444800},"seven_day":{"used_percentage":12,"resets_at":4102444800}}}`,
@@ -405,10 +405,10 @@ func TestStatusLineFeedsTheViews(t *testing.T) {
 	if strings.TrimSpace(line) != "Opus 5.5 · ctx 42% · 5h 31% · 7d 12%" {
 		t.Errorf("status line = %q", line)
 	}
-	if out := h.deck("", "list"); !strings.Contains(out, "plan 5h 31%   7d 12%") {
+	if out := h.ytta("", "list"); !strings.Contains(out, "plan 5h 31%   7d 12%") {
 		t.Errorf("list lacks the plan:\n%s", out)
 	}
-	h.tmux("set-environment", "-g", "DECK_TMUX_SOCKET", h.socket)
+	h.tmux("set-environment", "-g", "YTTA_TMUX_SOCKET", h.socket)
 	popup := h.tmux("new-window", "-d", "-P", "-F", "#{pane_id}", h.bin+" popup")
 	var screen string
 	for i := 0; i < 100; i++ {
@@ -426,17 +426,17 @@ func TestStatusLineFeedsTheViews(t *testing.T) {
 	// Wrapping a status line of the user's own: theirs is printed, from the
 	// same input, and the numbers are still recorded.
 	mine := base64.StdEncoding.EncodeToString([]byte(`printf 'mine: '; grep -o '"used_percentage":77'`))
-	wrappedLine := h.deck(`{"session_id":"`+sid+`","context_window":{"used_percentage":77}}`, "statusline", "--wrap64", mine)
+	wrappedLine := h.ytta(`{"session_id":"`+sid+`","context_window":{"used_percentage":77}}`, "statusline", "--wrap64", mine)
 	if strings.TrimSpace(wrappedLine) != `mine: "used_percentage":77` {
 		t.Errorf("wrapped status line = %q", wrappedLine)
 	}
-	if out := h.deck("", "list", "--json"); !strings.Contains(out, a) {
+	if out := h.ytta("", "list", "--json"); !strings.Contains(out, a) {
 		t.Errorf("agent missing after the wrapped line:\n%s", out)
 	}
 	if b, err := os.ReadFile(filepath.Join(filepath.Dir(h.state), "usage", sid+".json")); err != nil || !strings.Contains(string(b), `"context_used":77`) {
 		t.Errorf("wrapped line did not record usage: %v %s", err, b)
 	}
-	if out := h.deck("not json", "statusline"); strings.TrimSpace(out) != "" {
+	if out := h.ytta("not json", "statusline"); strings.TrimSpace(out) != "" {
 		t.Errorf("garbage input printed %q", out)
 	}
 }
@@ -445,8 +445,8 @@ func TestStatusLineFeedsTheViews(t *testing.T) {
 func TestSidebarRestoresASqueezedWidth(t *testing.T) {
 	h := newHarness(t)
 	sess, w1 := h.opt("alpha", "session_id"), h.opt("alpha", "window_id")
-	h.deck("", "sidebar", "toggle", "--session", sess, "--window", w1)
-	sb := h.tmux("show-options", "-qv", "-t", "alpha", "@deck_sidebar_pane")
+	h.ytta("", "sidebar", "toggle", "--session", sess, "--window", w1)
+	sb := h.tmux("show-options", "-qv", "-t", "alpha", "@ytta_sidebar_pane")
 	h.eventually(func() bool { return h.opt(sb, "pane_width") == "34" }, "sidebar at 34 columns")
 	h.tmux("resize-pane", "-t", sb, "-x", "8")
 	h.eventually(func() bool { return h.opt(sb, "pane_width") == "34" }, "sidebar to restore its width")
@@ -464,8 +464,8 @@ func TestSidebarDoesNotStealFocus(t *testing.T) {
 	h := newHarness(t)
 	sess, w1 := h.opt("alpha", "session_id"), h.opt("alpha", "window_id")
 	before := h.opt(w1, "pane_id")
-	h.deck("", "sidebar", "toggle", "--session", sess, "--window", w1)
-	sb := h.tmux("show-options", "-qv", "-t", "alpha", "@deck_sidebar_pane")
+	h.ytta("", "sidebar", "toggle", "--session", sess, "--window", w1)
+	sb := h.tmux("show-options", "-qv", "-t", "alpha", "@ytta_sidebar_pane")
 	h.eventually(func() bool { return h.opt(sb, "pane_title") == "agents" }, "sidebar to title itself")
 	if got := h.opt(w1, "pane_id"); got != before {
 		t.Errorf("active pane moved from %s to %s", before, got)
@@ -482,8 +482,8 @@ func TestSidebarSurvivesSwapsAndLayouts(t *testing.T) {
 	sess, w1 := h.opt("alpha", "session_id"), h.opt("alpha", "window_id")
 	h.tmux("split-window", "-d", "-t", w1, "sleep 100000")
 	h.tmux("split-window", "-d", "-v", "-t", w1, "sleep 100000")
-	h.deck("", "sidebar", "toggle", "--session", sess, "--window", w1)
-	sb := h.tmux("show-options", "-qv", "-t", "alpha", "@deck_sidebar_pane")
+	h.ytta("", "sidebar", "toggle", "--session", sess, "--window", w1)
+	sb := h.tmux("show-options", "-qv", "-t", "alpha", "@ytta_sidebar_pane")
 	pinned := func() bool {
 		return h.opt(sb, "window_id") == w1 && h.opt(sb, "pane_at_left") == "1" &&
 			h.opt(sb, "pane_at_top") == "1" && h.opt(sb, "pane_at_bottom") == "1"
@@ -527,7 +527,7 @@ func TestTmuxInitTurnsOnFocusEvents(t *testing.T) {
 func TestTickNeverShowsIdlesGlyph(t *testing.T) {
 	h := newHarness(t)
 	for i := 0; i < 3; i++ {
-		switch got := h.deck("", "tick"); got {
+		switch got := h.ytta("", "tick"); got {
 		case "●", "◉", "◎":
 		default:
 			t.Fatalf("tick printed %q", got)
@@ -544,20 +544,20 @@ func TestInstallRoundTrip(t *testing.T) {
 	if err := os.WriteFile(settings, []byte(original), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if out := h.deck("", "install", "--claude", "--settings", settings); !strings.Contains(out, "Preview only") {
+	if out := h.ytta("", "install", "--claude", "--settings", settings); !strings.Contains(out, "Preview only") {
 		t.Fatalf("install without --apply did not preview:\n%s", out)
 	}
 	if b, _ := os.ReadFile(settings); string(b) != original {
 		t.Fatal("preview changed the file")
 	}
-	h.deck("", "install", "--claude", "--apply", "--settings", settings)
+	h.ytta("", "install", "--claude", "--apply", "--settings", settings)
 	b, _ := os.ReadFile(settings)
-	for _, want := range []string{`"statusLine"`, `"PreToolUse"`, "# tmux-agent-deck", " statusline;"} {
+	for _, want := range []string{`"statusLine"`, `"PreToolUse"`, "# ytta", " statusline;"} {
 		if !strings.Contains(string(b), want) {
 			t.Errorf("installed file lacks %q", want)
 		}
 	}
-	h.deck("", "uninstall", "--claude", "--apply", "--settings", settings)
+	h.ytta("", "uninstall", "--claude", "--apply", "--settings", settings)
 	if b, _ := os.ReadFile(settings); string(b) != original {
 		t.Errorf("uninstall did not restore the file:\n%s", b)
 	}
@@ -565,7 +565,7 @@ func TestInstallRoundTrip(t *testing.T) {
 
 // A Codex installed from npm shows as "node" in tmux; sleep stands in for
 // it. The hook command names the agent, and the pane's command is all the
-// deck needs to know it is still there.
+// ytta needs to know it is still there.
 func TestCodexAgent(t *testing.T) {
 	h := newHarness(t)
 	a := h.tmux("split-window", "-d", "-t", "alpha", "-P", "-F", "#{pane_id}", "sleep 100000")
@@ -580,21 +580,21 @@ func TestCodexAgent(t *testing.T) {
 	}
 	for _, s := range steps {
 		h.hookAs("codex", a, s.event, s.extra)
-		if got := h.opt(a, "@deck_state"); got != s.state {
+		if got := h.opt(a, "@ytta_state"); got != s.state {
 			t.Fatalf("after %s: state %q, want %q", s.event, got, s.state)
 		}
 	}
-	if got := h.opt(a, "@deck_agent"); got != "codex" {
-		t.Errorf("@deck_agent = %q", got)
+	if got := h.opt(a, "@ytta_agent"); got != "codex" {
+		t.Errorf("@ytta_agent = %q", got)
 	}
-	if out := h.deck("", "list"); !strings.Contains(out, "codex · ") || !strings.Contains(out, "running") {
+	if out := h.ytta("", "list"); !strings.Contains(out, "codex · ") || !strings.Contains(out, "running") {
 		t.Errorf("list does not show the codex agent:\n%s", out)
 	}
-	if out := h.deck("", "list", "--json"); !strings.Contains(out, `"agent": "codex"`) {
+	if out := h.ytta("", "list", "--json"); !strings.Contains(out, `"agent": "codex"`) {
 		t.Errorf("JSON lacks the agent:\n%s", out)
 	}
 	h.hookAs("codex", a, "SessionEnd", "")
-	if got := h.opt(a, "@deck_state") + h.opt(a, "@deck_agent"); got != "" {
+	if got := h.opt(a, "@ytta_state") + h.opt(a, "@ytta_agent"); got != "" {
 		t.Errorf("after SessionEnd the pane keeps %q", got)
 	}
 }
@@ -609,16 +609,16 @@ func TestCodexInstallMergesAndRestores(t *testing.T) {
 	run := func(version string, args ...string) string {
 		t.Helper()
 		cmd := exec.Command(h.bin, args...)
-		cmd.Env = append(h.env(""), "DECK_CODEX_VERSION="+version)
+		cmd.Env = append(h.env(""), "YTTA_CODEX_VERSION="+version)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
-			t.Fatalf("deck %v: %v\n%s", args, err, out)
+			t.Fatalf("ytta %v: %v\n%s", args, err, out)
 		}
 		return string(out)
 	}
 	out := run("codex-cli 0.132.0", "install", "--codex", "--apply", "--settings", file)
 	b, _ := os.ReadFile(file)
-	for _, want := range []string{"other-tool hook", `"PermissionRequest"`, "hook --agent codex", "# tmux-agent-deck"} {
+	for _, want := range []string{"other-tool hook", `"PermissionRequest"`, "hook --agent codex", "# ytta"} {
 		if !strings.Contains(string(b), want) {
 			t.Errorf("hooks file lacks %q:\n%s", want, b)
 		}
@@ -641,7 +641,7 @@ func TestCodexInstallMergesAndRestores(t *testing.T) {
 	}
 }
 
-// cat stands in for an agent's input box: what the deck types shows up on
+// cat stands in for an agent's input box: what ytta types shows up on
 // its screen, and nothing runs it.
 func TestSendAndInterruptReachOnlyALiveAgent(t *testing.T) {
 	h := newHarness(t)
@@ -651,16 +651,16 @@ func TestSendAndInterruptReachOnlyALiveAgent(t *testing.T) {
 
 	// Text that would be a second tmux command, or a shell command, if any
 	// layer parsed it.
-	text := `use Postgres; kill-server ; $(touch /tmp/deck-should-not-exist) 'q' "q" #{pane_id}`
-	h.deck("", "send", a, text)
+	text := `use Postgres; kill-server ; $(touch /tmp/ytta-should-not-exist) 'q' "q" #{pane_id}`
+	h.ytta("", "send", a, text)
 	h.eventually(func() bool { return strings.Contains(h.tmux("capture-pane", "-p", "-J", "-t", a), text) }, "the text to reach the agent verbatim")
 	// cat echoes a submitted line back: the text appears twice once Enter landed.
 	h.eventually(func() bool {
 		return strings.Count(h.tmux("capture-pane", "-p", "-J", "-t", a), "use Postgres") == 2
 	}, "the prompt to be submitted")
-	h.deck("from stdin\n", "send", "--no-enter", a)
+	h.ytta("from stdin\n", "send", "--no-enter", a)
 	h.eventually(func() bool { return strings.Count(h.tmux("capture-pane", "-p", "-J", "-t", a), "from stdin") == 1 }, "unsubmitted text from stdin")
-	if buffers := h.tmux("list-buffers"); strings.Contains(buffers, "deck-send") {
+	if buffers := h.tmux("list-buffers"); strings.Contains(buffers, "ytta-send") {
 		t.Errorf("a send buffer was left behind: %s", buffers)
 	}
 
@@ -671,13 +671,13 @@ func TestSendAndInterruptReachOnlyALiveAgent(t *testing.T) {
 		cmd := exec.Command(h.bin, args...)
 		cmd.Env = h.env("")
 		if out, err := cmd.CombinedOutput(); err == nil || !strings.Contains(string(out), "runs no agent") {
-			t.Errorf("deck %v on a dead agent: %v %s", args, err, out)
+			t.Errorf("ytta %v on a dead agent: %v %s", args, err, out)
 		}
 	}
 	if screen := h.tmux("capture-pane", "-p", "-t", a); strings.Contains(screen, "rm -rf") {
 		t.Errorf("text reached a pane whose agent exited:\n%s", screen)
 	}
-	if buffers := h.tmux("list-buffers"); strings.Contains(buffers, "deck-send") {
+	if buffers := h.tmux("list-buffers"); strings.Contains(buffers, "ytta-send") {
 		t.Errorf("a refused send left its buffer behind: %s", buffers)
 	}
 
@@ -685,7 +685,7 @@ func TestSendAndInterruptReachOnlyALiveAgent(t *testing.T) {
 	b := h.tmux("split-window", "-d", "-t", "alpha", "-P", "-F", "#{pane_id}", "cat -v")
 	h.eventually(func() bool { return h.opt(b, "pane_current_command") == "cat" }, "second stand-in running")
 	h.hook(b, "UserPromptSubmit", "")
-	h.deck("", "interrupt", b)
+	h.ytta("", "interrupt", b)
 	h.eventually(func() bool { return strings.Contains(h.tmux("capture-pane", "-p", "-t", b), "^[") }, "Esc to reach the agent")
 }
 
@@ -696,7 +696,7 @@ func TestPopupPreviewsTheSelectedAgent(t *testing.T) {
 	h.eventually(func() bool { return h.opt(a, "pane_current_command") == "2.1.999" }, "fake claude")
 	h.hook(a, "UserPromptSubmit", "")
 	h.hook(a, "PermissionRequest", `,"tool_name":"Bash"`)
-	h.tmux("set-environment", "-g", "DECK_TMUX_SOCKET", h.socket)
+	h.tmux("set-environment", "-g", "YTTA_TMUX_SOCKET", h.socket)
 	popup := h.tmux("new-window", "-d", "-P", "-F", "#{pane_id}", h.bin+" popup")
 	h.eventually(func() bool {
 		screen := h.tmux("capture-pane", "-p", "-t", popup)
@@ -721,7 +721,7 @@ func TestListFiltersAndReportsBranch(t *testing.T) {
 	h.hook(b, "UserPromptSubmit", "")
 
 	var items []map[string]any
-	if err := json.Unmarshal([]byte(h.deck("", "list", "--json", "--filter", "state:waiting branch:oauth")), &items); err != nil {
+	if err := json.Unmarshal([]byte(h.ytta("", "list", "--json", "--filter", "state:waiting branch:oauth")), &items); err != nil {
 		t.Fatal(err)
 	}
 	if len(items) != 1 {
@@ -739,7 +739,7 @@ func TestListFiltersAndReportsBranch(t *testing.T) {
 			t.Errorf("JSON lacks %q: %v", k, items[0])
 		}
 	}
-	if out := h.deck("", "list", "--filter", "state:running"); !strings.Contains(out, "running") || strings.Contains(out, "waiting") {
+	if out := h.ytta("", "list", "--filter", "state:running"); !strings.Contains(out, "running") || strings.Contains(out, "waiting") {
 		t.Errorf("text list with a filter:\n%s", out)
 	}
 }
@@ -760,11 +760,11 @@ func TestGeminiAgent(t *testing.T) {
 	}
 	for _, s := range steps {
 		h.hookAs("gemini", a, s.event, s.extra)
-		if got := h.opt(a, "@deck_state"); got != s.state {
+		if got := h.opt(a, "@ytta_state"); got != s.state {
 			t.Fatalf("after %s: state %q, want %q", s.event, got, s.state)
 		}
 	}
-	if out := h.deck("", "list"); !strings.Contains(out, "gemini · ") {
+	if out := h.ytta("", "list"); !strings.Contains(out, "gemini · ") {
 		t.Errorf("list does not show the gemini agent:\n%s", out)
 	}
 
@@ -773,7 +773,7 @@ func TestGeminiAgent(t *testing.T) {
 	if err := os.WriteFile(settings, []byte(original), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	h.deck("", "install", "--gemini", "--apply", "--settings", settings)
+	h.ytta("", "install", "--gemini", "--apply", "--settings", settings)
 	b, _ := os.ReadFile(settings)
 	for _, want := range []string{`"BeforeAgent"`, `"AfterAgent"`, "hook --agent gemini", `"timeout": 5000`, `"theme": "dark"`} {
 		if !strings.Contains(string(b), want) {
@@ -783,14 +783,14 @@ func TestGeminiAgent(t *testing.T) {
 	if strings.Contains(string(b), "statusLine") || strings.Contains(string(b), "UserPromptSubmit") {
 		t.Errorf("Claude's settings leaked into Gemini's:\n%s", b)
 	}
-	h.deck("", "uninstall", "--gemini", "--apply", "--settings", settings)
+	h.ytta("", "uninstall", "--gemini", "--apply", "--settings", settings)
 	if b, _ := os.ReadFile(settings); string(b) != original {
 		t.Errorf("uninstall did not restore the file:\n%s", b)
 	}
 }
 
 // The opencode plugin runs under node here, fed the events opencode would
-// publish, and reports through the real deck binary to the real tmux server.
+// publish, and reports through the real ytta binary to the real tmux server.
 func TestOpenCodePlugin(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -798,16 +798,16 @@ func TestOpenCodePlugin(t *testing.T) {
 	}
 	h := newHarness(t)
 	dir := t.TempDir()
-	plugin := filepath.Join(dir, "plugins", "tmux-agent-deck.js")
-	if out := h.deck("", "install", "--opencode", "--settings", plugin); !strings.Contains(out, "Preview only") {
+	plugin := filepath.Join(dir, "plugins", "ytta.js")
+	if out := h.ytta("", "install", "--opencode", "--settings", plugin); !strings.Contains(out, "Preview only") {
 		t.Fatalf("install without --apply did not preview:\n%s", out)
 	}
-	out := h.deck("", "install", "--opencode", "--apply", "--settings", plugin)
+	out := h.ytta("", "install", "--opencode", "--apply", "--settings", plugin)
 	src, err := os.ReadFile(plugin)
-	// The deck stores its own path with symlinks resolved.
+	// ytta stores its own path with symlinks resolved.
 	bin, _ := filepath.EvalSymlinks(h.bin)
-	if err != nil || !strings.Contains(string(src), `const DECK = "`+bin+`"`) || !strings.Contains(out, "Restart opencode") {
-		t.Fatalf("plugin not written with the deck's path: %v\n%s", err, out)
+	if err != nil || !strings.Contains(string(src), `const YTTA = "`+bin+`"`) || !strings.Contains(out, "Restart opencode") {
+		t.Fatalf("plugin not written with ytta's path: %v\n%s", err, out)
 	}
 	// node only loads ES modules from .mjs outside a package.
 	module := filepath.Join(dir, "plugin.mjs")
@@ -821,7 +821,7 @@ func TestOpenCodePlugin(t *testing.T) {
 		t.Helper()
 		driver := filepath.Join(dir, "driver.mjs")
 		script := `const m = await import(process.argv[2])
-const hooks = await m.TmuxAgentDeck({})
+const hooks = await m.Ytta({})
 const ev = (type, properties) => hooks.event({ event: { type, properties } })
 const main = "ses_main"
 ` + body
@@ -834,7 +834,7 @@ const main = "ses_main"
 			t.Fatalf("plugin failed: %v\n%s", err, out)
 		}
 	}
-	state := func() string { return h.opt(a, "@deck_state") }
+	state := func() string { return h.opt(a, "@ytta_state") }
 
 	run(`await ev("session.created", { sessionID: main, info: { id: main } })
 await hooks["chat.message"]({ sessionID: main })
@@ -845,11 +845,11 @@ await ev("session.created", { sessionID: "ses_child", info: { id: "ses_child", p
 await hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_child" })
 await ev("session.idle", { sessionID: "ses_child" })
 `)
-	if got, why := state(), h.opt(a, "@deck_reason"); got != "waiting" || why != "permission bash" {
+	if got, why := state(), h.opt(a, "@ytta_reason"); got != "waiting" || why != "permission bash" {
 		t.Fatalf("after permission.asked: %q %q, want waiting for bash", got, why)
 	}
-	if got := h.opt(a, "@deck_agent"); got != "opencode" {
-		t.Errorf("@deck_agent = %q", got)
+	if got := h.opt(a, "@ytta_agent"); got != "opencode" {
+		t.Errorf("@ytta_agent = %q", got)
 	}
 	run(`await ev("permission.replied", { sessionID: main, reply: "reject" })
 `)
@@ -858,7 +858,7 @@ await ev("session.idle", { sessionID: "ses_child" })
 	}
 	run(`await ev("question.asked", { sessionID: main })
 `)
-	if got, why := state(), h.opt(a, "@deck_reason"); got != "waiting" || why != "question" {
+	if got, why := state(), h.opt(a, "@ytta_reason"); got != "waiting" || why != "question" {
 		t.Fatalf("after question.asked: %q %q", got, why)
 	}
 	// Two assistant messages, the second updated while it streamed, and a
@@ -887,7 +887,7 @@ await ev("session.idle", { sessionID: main })
 			OutputTokens int64   `json:"output_tokens"`
 		} `json:"usage"`
 	}
-	if err := json.Unmarshal([]byte(h.deck("", "list", "--json", "--filter", "pane:"+a)), &listed); err != nil || len(listed) != 1 {
+	if err := json.Unmarshal([]byte(h.ytta("", "list", "--json", "--filter", "pane:"+a)), &listed); err != nil || len(listed) != 1 {
 		t.Fatalf("list: %v %v", err, listed)
 	}
 	if u := listed[0].Usage; u.Model != "big-model" || u.CostUSD != 0.75 || u.InputTokens != 3200 || u.OutputTokens != 520 {
@@ -901,7 +901,7 @@ await ev("session.idle", { sessionID: main })
 		t.Fatalf("after an aborted turn: %q, want idle", got)
 	}
 	// Events arrive in the order they happened even though nothing waits.
-	trace := h.deck("", "events", "--pane", a)
+	trace := h.ytta("", "events", "--pane", a)
 	order := []string{"idle -> running", "running -> waiting", "waiting -> running", "running -> waiting", "waiting -> running", "running -> done", "done -> running", "running -> idle"}
 	at := 0
 	for _, want := range order {
@@ -924,10 +924,10 @@ await ev("session.idle", { sessionID: main })
 	}
 	cmd := exec.Command(h.bin, "install", "--opencode", "--apply", "--settings", foreign)
 	cmd.Env = h.env("")
-	if out, err := cmd.CombinedOutput(); err == nil || !strings.Contains(string(out), "not the deck's plugin") {
+	if out, err := cmd.CombinedOutput(); err == nil || !strings.Contains(string(out), "not ytta's plugin") {
 		t.Errorf("overwrote a foreign plugin: %v %s", err, out)
 	}
-	h.deck("", "uninstall", "--opencode", "--apply", "--settings", plugin)
+	h.ytta("", "uninstall", "--opencode", "--apply", "--settings", plugin)
 	if _, err := os.Stat(plugin); !os.IsNotExist(err) {
 		t.Errorf("uninstall left the plugin: %v", err)
 	}
@@ -990,7 +990,7 @@ func TestEventsFollowAndWait(t *testing.T) {
 	next(`"to":"running"`)
 
 	// Already in a wanted state: returns at once.
-	if out := h.deck("", "wait", "--state", "running", a); strings.TrimSpace(out) != "running" {
+	if out := h.ytta("", "wait", "--state", "running", a); strings.TrimSpace(out) != "running" {
 		t.Errorf("wait --state running = %q", out)
 	}
 	for _, args := range [][]string{
@@ -1001,7 +1001,7 @@ func TestEventsFollowAndWait(t *testing.T) {
 		cmd := exec.Command(h.bin, args...)
 		cmd.Env = h.env("")
 		if out, err := cmd.CombinedOutput(); err == nil {
-			t.Errorf("deck %v succeeded: %s", args, out)
+			t.Errorf("ytta %v succeeded: %s", args, out)
 		}
 	}
 }
@@ -1017,11 +1017,11 @@ func TestRenameCopyTimelineAndAttention(t *testing.T) {
 	h.hook(a, "PermissionRequest", `,"tool_name":"Bash"`)
 	h.hook(quiet, "SessionStart", `,"source":"startup"`)
 
-	if got := h.opt(a, "@deck_started"); got == "" {
+	if got := h.opt(a, "@ytta_started"); got == "" {
 		t.Error("the session's start was not recorded")
 	}
 	var items []map[string]any
-	if err := json.Unmarshal([]byte(h.deck("", "list", "--json", "--filter", "pane:"+a)), &items); err != nil || len(items) != 1 {
+	if err := json.Unmarshal([]byte(h.ytta("", "list", "--json", "--filter", "pane:"+a)), &items); err != nil || len(items) != 1 {
 		t.Fatalf("list: %v %v", err, items)
 	}
 	if at, _ := items[0]["started_at"].(float64); at < 1 {
@@ -1029,19 +1029,19 @@ func TestRenameCopyTimelineAndAttention(t *testing.T) {
 	}
 
 	// A label with what would end a tmux command, or split the pane listing.
-	h.deck("", "rename", a, "billing\tfix ; kill-server;")
-	if got := h.opt(a, "@deck_name"); got != "billing fix ; kill-server" {
-		t.Errorf("@deck_name = %q", got)
+	h.ytta("", "rename", a, "billing\tfix ; kill-server;")
+	if got := h.opt(a, "@ytta_name"); got != "billing fix ; kill-server" {
+		t.Errorf("@ytta_name = %q", got)
 	}
-	if out := h.deck("", "list"); !strings.Contains(out, "billing fix ; kill-server") || !strings.Contains(out, "idle") {
+	if out := h.ytta("", "list"); !strings.Contains(out, "billing fix ; kill-server") || !strings.Contains(out, "idle") {
 		t.Errorf("list after rename:\n%s", out)
 	}
-	h.deck("", "rename", a, "billing")
+	h.ytta("", "rename", a, "billing")
 
 	// The popup opens on the agents that need you when the option says so,
 	// with the selected one's last state changes above its screen.
-	h.tmux("set-option", "-g", "@deck-popup-attention", "on")
-	h.tmux("set-environment", "-g", "DECK_TMUX_SOCKET", h.socket)
+	h.tmux("set-option", "-g", "@ytta-popup-attention", "on")
+	h.tmux("set-environment", "-g", "YTTA_TMUX_SOCKET", h.socket)
 	popup := h.tmux("new-window", "-d", "-P", "-F", "#{pane_id}", h.bin+" popup")
 	var screen string
 	h.eventually(func() bool {
@@ -1064,9 +1064,9 @@ func TestRenameCopyTimelineAndAttention(t *testing.T) {
 	h.tmux("send-keys", "-t", popup, "r")
 	h.tmux("send-keys", "-t", popup, "-l", " v2")
 	h.tmux("send-keys", "-t", popup, "Enter")
-	h.eventually(func() bool { return h.opt(a, "@deck_name") == "billing v2" }, "the rename from the popup")
-	h.deck("", "rename", a)
-	if got := h.opt(a, "@deck_name"); got != "" {
+	h.eventually(func() bool { return h.opt(a, "@ytta_name") == "billing v2" }, "the rename from the popup")
+	h.ytta("", "rename", a)
+	if got := h.opt(a, "@ytta_name"); got != "" {
 		t.Errorf("label not removed: %q", got)
 	}
 }
@@ -1075,7 +1075,7 @@ func TestDoctorReportsAHealthySetup(t *testing.T) {
 	h := newHarness(t)
 	claude := t.TempDir()
 	settings := filepath.Join(claude, "settings.json")
-	h.deck("", "install", "--claude", "--apply", "--settings", settings)
+	h.ytta("", "install", "--claude", "--apply", "--settings", settings)
 	cmd := exec.Command(h.bin, "doctor")
 	cmd.Env = append(h.env(""), "CLAUDE_CONFIG_DIR="+claude)
 	out, err := cmd.CombinedOutput()
@@ -1094,18 +1094,18 @@ func TestDoctorReportsAHealthySetup(t *testing.T) {
 func TestKilledSidebarCleansUp(t *testing.T) {
 	h := newHarness(t)
 	sess, w1 := h.opt("alpha", "session_id"), h.opt("alpha", "window_id")
-	h.deck("", "sidebar", "toggle", "--session", sess, "--window", w1)
-	sb := h.tmux("show-options", "-qv", "-t", "alpha", "@deck_sidebar_pane")
+	h.ytta("", "sidebar", "toggle", "--session", sess, "--window", w1)
+	sb := h.tmux("show-options", "-qv", "-t", "alpha", "@ytta_sidebar_pane")
 	h.eventually(func() bool { return strings.Contains(h.tmux("capture-pane", "-p", "-t", sb), "agents") }, "sidebar to draw")
 	h.tmux("kill-pane", "-t", sb)
 	h.eventually(func() bool {
-		return h.tmux("show-options", "-qv", "-t", "alpha", "@deck_sidebar_pane") == "" &&
-			h.tmux("show-options", "-qv", "-t", "alpha", "@deck_sidebar_window") == ""
+		return h.tmux("show-options", "-qv", "-t", "alpha", "@ytta_sidebar_pane") == "" &&
+			h.tmux("show-options", "-qv", "-t", "alpha", "@ytta_sidebar_window") == ""
 	}, "the killed sidebar to clear its session options")
 }
 
 // Leaving a pane whose turn ended silently repairs it through the tmux hook,
-// not only through a direct `deck reconcile`.
+// not only through a direct `ytta reconcile`.
 func TestFocusOutRepairsThroughTheHook(t *testing.T) {
 	h := newHarness(t)
 	first := h.opt("alpha", "pane_id")
@@ -1117,7 +1117,7 @@ func TestFocusOutRepairsThroughTheHook(t *testing.T) {
 	h.attach("alpha")
 	h.tmux("select-pane", "-t", a)
 	h.tmux("select-pane", "-t", first) // a loses focus
-	h.eventually(func() bool { return h.opt(a, "@deck_state") == "idle" }, "the focus-out hook to repair the silent ending")
+	h.eventually(func() bool { return h.opt(a, "@ytta_state") == "idle" }, "the focus-out hook to repair the silent ending")
 }
 
 // Two layout changes within the pin interval: the second pin is deferred,
@@ -1126,14 +1126,14 @@ func TestPinTooSoonIsDeferredNotDropped(t *testing.T) {
 	h := newHarness(t)
 	sess, w1 := h.opt("alpha", "session_id"), h.opt("alpha", "window_id")
 	h.tmux("split-window", "-d", "-t", w1, "sleep 100000")
-	h.deck("", "sidebar", "toggle", "--session", sess, "--window", w1)
-	sb := h.tmux("show-options", "-qv", "-t", "alpha", "@deck_sidebar_pane")
+	h.ytta("", "sidebar", "toggle", "--session", sess, "--window", w1)
+	sb := h.tmux("show-options", "-qv", "-t", "alpha", "@ytta_sidebar_pane")
 	pinned := func() bool {
 		return h.opt(sb, "pane_at_left") == "1" && h.opt(sb, "pane_at_top") == "1" && h.opt(sb, "pane_at_bottom") == "1"
 	}
 	h.eventually(pinned, "sidebar pinned at start")
 	// A pin just happened, as far as the rate limit knows.
-	h.tmux("set-option", "-p", "-t", sb, "@deck_pinned_at", fmt.Sprint(time.Now().UnixMilli()))
+	h.tmux("set-option", "-p", "-t", sb, "@ytta_pinned_at", fmt.Sprint(time.Now().UnixMilli()))
 	h.tmux("select-layout", "-t", w1, "even-vertical")
 	if pinned() {
 		t.Fatal("even-vertical left the sidebar in place; the test proves nothing")

@@ -1,11 +1,11 @@
 # yaml-language-server: $schema=https://goreleaser.com/static/schema.json
 version: 2
-project_name: tmux-agent-deck
+project_name: ytta
 
 builds:
-  - id: deck
-    main: ./cmd/deck
-    binary: deck
+  - id: ytta
+    main: ./cmd/ytta
+    binary: ytta
     env:
       - CGO_ENABLED=0
     goos: [linux, darwin]
@@ -15,7 +15,7 @@ builds:
     ldflags:
       - -s -w -X main.version={{ .Tag }}
 
-# agent-deck.tmux downloads tmux-agent-deck_<version>_<os>_<arch>.tar.gz and
+# ytta.tmux downloads ytta_<version>_<os>_<arch>.tar.gz and
 # verifies it against checksums.txt; keep both names in step with it.
 archives:
   - formats: [tar.gz]

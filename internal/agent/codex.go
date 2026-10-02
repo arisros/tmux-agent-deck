@@ -3,8 +3,8 @@ package agent
 import (
 	"strings"
 
-	"github.com/arisros/tmux-agent-deck/internal/hook"
-	"github.com/arisros/tmux-agent-deck/internal/machine"
+	"github.com/arisros/ytta/internal/hook"
+	"github.com/arisros/ytta/internal/machine"
 )
 
 // Codex is OpenAI's Codex CLI. Its hooks carry the same payload fields as
@@ -50,7 +50,7 @@ func mapCodex(p hook.Payload, now int64) (hook.Action, machine.Event) {
 }
 
 // classifyCodex only concludes from Codex's own words. It never says idle:
-// Codex prints no end-of-turn marker the deck has seen, so an ended turn is
+// Codex prints no end-of-turn marker ytta has seen, so an ended turn is
 // left to the Stop and Interrupt hooks.
 func classifyCodex(screen string) string {
 	lines := strings.Split(strings.TrimRight(screen, "\n "), "\n")

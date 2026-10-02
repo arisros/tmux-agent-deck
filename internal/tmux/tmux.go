@@ -1,4 +1,4 @@
-// Package tmux is the deck's only way to talk to tmux: a thin exec wrapper,
+// Package tmux is ytta's only way to talk to tmux: a thin exec wrapper,
 // the format strings it depends on, and command batching.
 package tmux
 
@@ -23,9 +23,9 @@ type Client struct {
 	Socket string
 }
 
-// FromEnv targets the server named by $DECK_TMUX_SOCKET, else the one the
+// FromEnv targets the server named by $YTTA_TMUX_SOCKET, else the one the
 // calling process runs in.
-func FromEnv() Client { return Client{Socket: os.Getenv("DECK_TMUX_SOCKET")} }
+func FromEnv() Client { return Client{Socket: os.Getenv("YTTA_TMUX_SOCKET")} }
 
 func (c Client) command(args ...string) *exec.Cmd {
 	return exec.Command("tmux", append(c.Flags(), args...)...)
@@ -124,12 +124,12 @@ const (
 	// which renames itself to its version number ("2.1.284").
 	IsClaudeFormat = `#{||:#{m/r:^[0-9]+\.[0-9]+\.[0-9]+$,#{pane_current_command}},#{m:claude*,#{pane_current_command}}}`
 
-	// AliveFormat is true while a pane still runs the agent the deck heard
-	// from: its foreground command is the one remembered in @deck_cmd when a
+	// AliveFormat is true while a pane still runs the agent ytta heard
+	// from: its foreground command is the one remembered in @ytta_cmd when a
 	// hook last fired there. An agent started through a wrapper shows as the
 	// wrapper ("node"), so no list of process names can tell. Claude Code is
 	// also matched by name, since it renames itself after it starts.
-	AliveFormat = `#{||:#{&&:#{@deck_cmd},#{==:#{pane_current_command},#{@deck_cmd}}},` + IsClaudeFormat + `}`
+	AliveFormat = `#{||:#{&&:#{@ytta_cmd},#{==:#{pane_current_command},#{@ytta_cmd}}},` + IsClaudeFormat + `}`
 )
 
 // Pane is one row of list-panes.
@@ -143,9 +143,9 @@ type Pane struct {
 	Cmd string
 	// Agent names the agent in the pane: "claude", "codex".
 	Agent string
-	// Label is the name the user gave the agent with "r" or deck rename.
+	// Label is the name the user gave the agent with "r" or ytta rename.
 	Label string
-	// Started is when the deck first heard from the session, unix seconds.
+	// Started is when ytta first heard from the session, unix seconds.
 	Started                            int64
 	Since                              int64
 	PaneActive, WindowActive, Attached bool
@@ -155,9 +155,9 @@ type Pane struct {
 var paneFields = []string{
 	"#{pane_id}", "#{session_name}", "#{session_id}", "#{window_index}", "#{window_id}", "#{pane_index}",
 	"#{window_name}", "#{pane_current_command}", "#{pane_title}", "#{pane_current_path}",
-	"#{@deck_state}", "#{@deck_sid}", "#{@deck_sidebar}", "#{@deck_since}",
+	"#{@ytta_state}", "#{@ytta_sid}", "#{@ytta_sidebar}", "#{@ytta_since}",
 	"#{pane_active}", "#{window_active}", "#{session_attached}", "#{window_panes}",
-	"#{@deck_reason}", "#{@deck_cmd}", "#{@deck_agent}", "#{@deck_started}", "#{@deck_name}",
+	"#{@ytta_reason}", "#{@ytta_cmd}", "#{@ytta_agent}", "#{@ytta_started}", "#{@ytta_name}",
 }
 
 // sep must survive tmux's output escaping: tmux prints control characters

@@ -9,13 +9,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/arisros/tmux-agent-deck/internal/deck"
-	"github.com/arisros/tmux-agent-deck/internal/tmux"
-	"github.com/arisros/tmux-agent-deck/internal/ui"
+	"github.com/arisros/ytta/internal/tmux"
+	"github.com/arisros/ytta/internal/ui"
+	"github.com/arisros/ytta/internal/ytta"
 )
 
-// Everything the deck types into a pane goes through ifAlive: tmux checks,
-// in the same call that sends, that the pane still runs the agent the deck
+// Everything ytta types into a pane goes through ifAlive: tmux checks,
+// in the same call that sends, that the pane still runs the agent ytta
 // heard from. A pane whose agent exited is a shell, and text sent there
 // would run as a command.
 func ifAlive(c tmux.Client, pane, then, otherwise string) error {
@@ -24,7 +24,7 @@ func ifAlive(c tmux.Client, pane, then, otherwise string) error {
 }
 
 // sendKey presses one named key in an agent's pane. key is always one of the
-// deck's own constants, never user text: it becomes part of a tmux command.
+// ytta's own constants, never user text: it becomes part of a tmux command.
 func sendKey(c tmux.Client, pane, key string) error {
 	return ifAlive(c, pane, "send-keys -t "+pane+" "+key, "")
 }
@@ -37,7 +37,7 @@ func sendText(c tmux.Client, pane, text string, submit bool) error {
 	if text == "" {
 		return errors.New("nothing to send")
 	}
-	buf := fmt.Sprintf("deck-send-%d", os.Getpid())
+	buf := fmt.Sprintf("ytta-send-%d", os.Getpid())
 	if _, err := c.RunInput(text, "load-buffer", "-b", buf, "-"); err != nil {
 		return err
 	}
@@ -54,7 +54,7 @@ func sendText(c tmux.Client, pane, text string, submit bool) error {
 
 // act performs what a key in a view asked for on the agent under the cursor.
 // It reports whether the agent's screen is about to change.
-func act(d *deck.Deck, c tmux.Client, l *ui.List, o ui.Outcome) bool {
+func act(d *ytta.Ytta, c tmux.Client, l *ui.List, o ui.Outcome) bool {
 	r, ok := l.Selected()
 	if !ok {
 		return false
@@ -114,19 +114,19 @@ func rename(c tmux.Client, pane, name string) error {
 	}, name)
 	// tmux reads an argument that ends in ";" as the end of a command.
 	name = strings.TrimSpace(strings.TrimRight(strings.TrimSpace(name), ";"))
-	args := []string{"set-option", "-p", "-t", pane, "@deck_name", name}
+	args := []string{"set-option", "-p", "-t", pane, "@ytta_name", name}
 	if name == "" {
-		args = []string{"set-option", "-p", "-u", "-t", pane, "@deck_name"}
+		args = []string{"set-option", "-p", "-u", "-t", pane, "@ytta_name"}
 	}
-	return c.Batch([][]string{args, {"wait-for", "-S", deck.Signal}})
+	return c.Batch([][]string{args, {"wait-for", "-S", ytta.Signal}})
 }
 
 func runRename(args []string) error {
 	if len(args) < 1 {
-		return errors.New("usage: deck rename <pane> [name...]  (no name removes the label)")
+		return errors.New("usage: ytta rename <pane> [name...]  (no name removes the label)")
 	}
 	if !strings.HasPrefix(args[0], "%") {
-		return fmt.Errorf("%q is not a pane id such as %%12 (see deck list)", args[0])
+		return fmt.Errorf("%q is not a pane id such as %%12 (see ytta list)", args[0])
 	}
 	return rename(tmux.FromEnv(), args[0], strings.Join(args[1:], " "))
 }
@@ -138,7 +138,7 @@ func runSend(args []string, stdin io.Reader) error {
 		return err
 	}
 	if fs.NArg() < 1 {
-		return errors.New("usage: deck send [--no-enter] <pane> [text...]  (text from stdin when omitted)")
+		return errors.New("usage: ytta send [--no-enter] <pane> [text...]  (text from stdin when omitted)")
 	}
 	pane, text := fs.Arg(0), strings.Join(fs.Args()[1:], " ")
 	if fs.NArg() == 1 {
@@ -157,7 +157,7 @@ func runSend(args []string, stdin io.Reader) error {
 
 func runInterrupt(args []string) error {
 	if len(args) != 1 {
-		return errors.New("usage: deck interrupt <pane>")
+		return errors.New("usage: ytta interrupt <pane>")
 	}
 	c := tmux.FromEnv()
 	if err := mustBeAgent(c, args[0]); err != nil {
@@ -170,15 +170,15 @@ func runInterrupt(args []string) error {
 // agent; the guard inside tmux would otherwise just do nothing.
 func mustBeAgent(c tmux.Client, pane string) error {
 	if !strings.HasPrefix(pane, "%") {
-		return fmt.Errorf("%q is not a pane id such as %%12 (see deck list)", pane)
+		return fmt.Errorf("%q is not a pane id such as %%12 (see ytta list)", pane)
 	}
-	out, err := c.Run("display-message", "-p", "-t", pane, "#{@deck_state} "+tmux.AliveFormat)
+	out, err := c.Run("display-message", "-p", "-t", pane, "#{@ytta_state} "+tmux.AliveFormat)
 	if err != nil {
 		return err
 	}
 	f := strings.Fields(out)
 	if len(f) != 2 || f[1] != "1" {
-		return fmt.Errorf("pane %s runs no agent the deck knows", pane)
+		return fmt.Errorf("pane %s runs no agent ytta knows", pane)
 	}
 	return nil
 }

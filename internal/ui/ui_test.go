@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/arisros/tmux-agent-deck/internal/tmux"
-	"github.com/arisros/tmux-agent-deck/internal/usage"
+	"github.com/arisros/ytta/internal/tmux"
+	"github.com/arisros/ytta/internal/usage"
 )
 
 var now = time.Unix(10_000, 0)
@@ -25,7 +25,7 @@ func TestAgentsFilterAndOrder(t *testing.T) {
 		pane("%3", "a", "1", "waiting", "2.1.284", "✳ needs you", 9_950),
 		pane("%4", "a", "1", "done", "2.1.284", "✳ finished", 9_900),
 		pane("%5", "a", "3", "running", "zsh", "✳ stale title", 9_000), // claude exited
-		pane("%6", "a", "4", "", "2.1.284", "✳ unknown", 0),            // no deck state yet
+		pane("%6", "a", "4", "", "2.1.284", "✳ unknown", 0),            // no ytta state yet
 		{ID: "%7", State: "running", Command: "2.1.284", Sidebar: "1"},
 	}
 	rows := Agents(panes, now)

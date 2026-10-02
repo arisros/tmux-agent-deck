@@ -1,9 +1,9 @@
-// Package install adds and removes tmux-agent-deck hooks in a Claude Code
+// Package install adds and removes ytta hooks in a Claude Code
 // settings file without disturbing anything else in it.
 //
 // The file is edited as an ordered JSON tree: key order and every value this
 // package does not own are carried over untouched, so the diff a user reviews
-// only shows the deck's own hook entries.
+// only shows ytta's own hook entries.
 package install
 
 import (
@@ -17,7 +17,7 @@ import (
 )
 
 // Marker identifies hook commands owned by this plugin.
-const Marker = "tmux-agent-deck"
+const Marker = "ytta"
 
 // Hook describes the command registered on each event.
 type Hook struct {
@@ -26,7 +26,7 @@ type Hook struct {
 	Timeout int
 }
 
-// Add registers h on every event, replacing any earlier deck entry, and
+// Add registers h on every event, replacing any earlier ytta entry, and
 // returns the new file content.
 func Add(settings []byte, events []string, h Hook) ([]byte, error) {
 	if !strings.Contains(h.Command, Marker) {
@@ -70,7 +70,7 @@ func Add(settings []byte, events []string, h Hook) ([]byte, error) {
 	return format(root.raw())
 }
 
-// Remove deletes every deck hook, dropping groups and events it leaves empty.
+// Remove deletes every ytta hook, dropping groups and events it leaves empty.
 func Remove(settings []byte) ([]byte, error) {
 	if len(bytes.TrimSpace(settings)) == 0 {
 		settings = []byte("{}")
@@ -95,7 +95,7 @@ func Remove(settings []byte) ([]byte, error) {
 		}
 		kept := make([]json.RawMessage, 0, len(groups))
 		for _, g := range groups {
-			ng, keep, err := withoutDeck(g)
+			ng, keep, err := withoutYtta(g)
 			if err != nil {
 				return nil, fmt.Errorf("hooks.%s: %w", ev.Key, err)
 			}
@@ -108,7 +108,7 @@ func Remove(settings []byte) ([]byte, error) {
 		}
 	}
 	if len(out) == 0 {
-		// Nothing left but what the deck added: leave no empty "hooks" behind.
+		// Nothing left but what ytta added: leave no empty "hooks" behind.
 		kept := object{}
 		for _, m := range root {
 			if m.Key != "hooks" {
@@ -121,7 +121,7 @@ func Remove(settings []byte) ([]byte, error) {
 	return format(root.raw())
 }
 
-// Owned reports which events currently carry a deck hook.
+// Owned reports which events currently carry a ytta hook.
 func Owned(settings []byte) ([]string, error) {
 	root, err := parseObject(settings)
 	if err != nil {
@@ -144,7 +144,7 @@ func Owned(settings []byte) ([]string, error) {
 	return events, nil
 }
 
-func withoutDeck(groupRaw json.RawMessage) (json.RawMessage, bool, error) {
+func withoutYtta(groupRaw json.RawMessage) (json.RawMessage, bool, error) {
 	group, err := parseObject(groupRaw)
 	if err != nil {
 		return nil, false, err
@@ -271,8 +271,8 @@ func format(b []byte) ([]byte, error) {
 }
 
 // SetStatusLine points Claude's statusLine at command, unless the user has a
-// status line of their own: that one is theirs, and the deck only reads
-// usage when it owns the slot. It reports whether the deck owns it after.
+// status line of their own: that one is theirs, and ytta only reads
+// usage when it owns the slot. It reports whether ytta owns it after.
 func SetStatusLine(settings []byte, command string) ([]byte, bool, error) {
 	if len(bytes.TrimSpace(settings)) == 0 {
 		settings = []byte("{}")
@@ -337,8 +337,8 @@ func Unwrap(command string) (string, bool) {
 	return string(b), err == nil
 }
 
-// RemoveStatusLine drops the statusLine if the deck owns it, and puts the
-// user's own command back if the deck wraps it.
+// RemoveStatusLine drops the statusLine if ytta owns it, and puts the
+// user's own command back if ytta wraps it.
 func RemoveStatusLine(settings []byte) ([]byte, error) {
 	if len(bytes.TrimSpace(settings)) == 0 {
 		settings = []byte("{}")

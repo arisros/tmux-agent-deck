@@ -1,4 +1,4 @@
-module github.com/arisros/tmux-agent-deck
+module github.com/arisros/ytta
 
 go 1.26.0
 

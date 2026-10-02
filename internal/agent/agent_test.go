@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/arisros/tmux-agent-deck/internal/hook"
-	"github.com/arisros/tmux-agent-deck/internal/machine"
+	"github.com/arisros/ytta/internal/hook"
+	"github.com/arisros/ytta/internal/machine"
 )
 
 func TestFor(t *testing.T) {

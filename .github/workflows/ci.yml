@@ -37,8 +37,8 @@ jobs:
       - name: test (unit, fixture replay, integration on private tmux servers)
         run: go test -race ./...
         env:
-          DECK_LEAK_WORDS: ${{ secrets.DECK_LEAK_WORDS }}
-      - run: make build && ./bin/deck --version
+          YTTA_LEAK_WORDS: ${{ secrets.YTTA_LEAK_WORDS }}
+      - run: make build && ./bin/ytta --version
 
   floor:
     # The oldest tmux the plugin supports, and the first one with a styled
@@ -90,8 +90,8 @@ jobs:
         env:
           # Shared runners have a noisy tail: gate on the median, with slack.
           # The p95 budgets in test/integration/perf_test.go hold on a laptop.
-          DECK_PERF_TAIL: "off"
-          DECK_PERF_SLACK: "4"
+          YTTA_PERF_TAIL: "off"
+          YTTA_PERF_SLACK: "4"
 
   lint:
     runs-on: ubuntu-latest
@@ -117,7 +117,7 @@ jobs:
         with:
           go-version-file: go.mod
       - name: shellcheck
-        run: shellcheck agent-deck.tmux scripts/*.sh
+        run: shellcheck ytta.tmux scripts/*.sh
       - name: go.mod and go.sum are tidy
         run: go mod tidy && git diff --exit-code go.mod go.sum
       - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3

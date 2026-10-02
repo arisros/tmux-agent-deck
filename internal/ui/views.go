@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/arisros/tmux-agent-deck/internal/machine"
-	"github.com/arisros/tmux-agent-deck/internal/usage"
+	"github.com/arisros/ytta/internal/machine"
+	"github.com/arisros/ytta/internal/usage"
 )
 
 const (
@@ -498,7 +498,7 @@ func stripReset(s string) string {
 const labelW = 10
 
 // stateLabel is the state column; a waiting agent's label shouts, and names
-// what it waits for when the deck knows.
+// what it waits for when ytta knows.
 func stateLabel(r Row) string {
 	if r.State != machine.Waiting {
 		return Fit(r.State, labelW)

@@ -11,7 +11,7 @@ all: test-race lint
 # Writes the same bin/.rev stamp the tpm entrypoint checks, so the next tmux
 # load keeps this build instead of rebuilding over it.
 build:
-	go build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o bin/deck ./cmd/deck
+	go build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o bin/ytta ./cmd/ytta
 	@echo $(VERSION) > bin/.rev
 
 test:
@@ -22,7 +22,7 @@ test-race:
 
 # Alone, so the timings are not skewed by other packages running in parallel.
 perf:
-	DECK_PERF=1 go test -count=1 -run Performance -v ./test/integration/ | grep -E 'perf_test|^(ok|FAIL|---)'
+	YTTA_PERF=1 go test -count=1 -run Performance -v ./test/integration/ | grep -E 'perf_test|^(ok|FAIL|---)'
 	go test -run '^$$' -bench HookPath -benchmem ./internal/machine | grep -E 'Benchmark|^ok'
 
 vet:

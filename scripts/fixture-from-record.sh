@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Turn a slice of a `deck hook --record` trace into a replayable fixture.
+# Turn a slice of a `ytta hook --record` trace into a replayable fixture.
 #
 #   scripts/fixture-from-record.sh <trace.jsonl> <pane> <from HH:MM:SS> <to HH:MM:SS> > test/fixtures/<name>.jsonl
 #

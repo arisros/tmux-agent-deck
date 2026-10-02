@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/arisros/tmux-agent-deck/internal/machine"
+	"github.com/arisros/ytta/internal/machine"
 )
 
 func TestMap(t *testing.T) {

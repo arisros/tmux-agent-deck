@@ -29,9 +29,9 @@ func percentile(d []time.Duration, p float64) time.Duration {
 // one that broke other plugins: 11 sessions, 64 windows, 120 panes, 9 agents.
 func TestPerformanceAtScale(t *testing.T) {
 	// Timing only means something without other test packages competing for
-	// the CPU, so it runs on its own: make perf, or DECK_PERF=1.
-	if os.Getenv("DECK_PERF") != "1" {
-		t.Skip("set DECK_PERF=1 (make perf) to run the performance test on its own")
+	// the CPU, so it runs on its own: make perf, or YTTA_PERF=1.
+	if os.Getenv("YTTA_PERF") != "1" {
+		t.Skip("set YTTA_PERF=1 (make perf) to run the performance test on its own")
 	}
 	h := newHarness(t)
 
@@ -81,17 +81,17 @@ func TestPerformanceAtScale(t *testing.T) {
 	var views []time.Duration
 	for i := 0; i < 20; i++ {
 		start := time.Now()
-		h.deck("", "list")
+		h.ytta("", "list")
 		views = append(views, time.Since(start))
 	}
 
 	// The median is stable anywhere; the p95 tail jumps with neighbouring
 	// load on shared CI runners. Locally both are enforced. CI sets
-	// DECK_PERF_TAIL=off and scales the medians with DECK_PERF_SLACK, which
+	// YTTA_PERF_TAIL=off and scales the medians with YTTA_PERF_SLACK, which
 	// still catches a real regression: one slow hook moves every sample.
-	tail := os.Getenv("DECK_PERF_TAIL") != "off"
+	tail := os.Getenv("YTTA_PERF_TAIL") != "off"
 	slack := 1.0
-	if v, err := strconv.ParseFloat(os.Getenv("DECK_PERF_SLACK"), 64); err == nil && v > 0 {
+	if v, err := strconv.ParseFloat(os.Getenv("YTTA_PERF_SLACK"), 64); err == nil && v > 0 {
 		slack = v
 	}
 	report := func(name string, d []time.Duration, p50Limit, p95Limit time.Duration) {
@@ -106,12 +106,12 @@ func TestPerformanceAtScale(t *testing.T) {
 			t.Errorf("%s p95 %s over budget %s", name, p95, p95Limit)
 		}
 	}
-	report("hook, no state change", hot, 8*time.Millisecond, budget("DECK_PERF_HOOK_MS", 15))
-	report("hook, state change", edges, 18*time.Millisecond, budget("DECK_PERF_EDGE_MS", 25))
-	report("list (view refresh)", views, 40*time.Millisecond, budget("DECK_PERF_VIEW_MS", 80))
+	report("hook, no state change", hot, 8*time.Millisecond, budget("YTTA_PERF_HOOK_MS", 15))
+	report("hook, state change", edges, 18*time.Millisecond, budget("YTTA_PERF_EDGE_MS", 25))
+	report("list (view refresh)", views, 40*time.Millisecond, budget("YTTA_PERF_VIEW_MS", 80))
 
 	// Nothing may keep running between events: no daemon, no ticker.
 	if out, _ := exec.Command("pgrep", "-f", h.bin).Output(); len(strings.TrimSpace(string(out))) > 0 {
-		t.Errorf("deck processes alive at idle: %s", out)
+		t.Errorf("ytta processes alive at idle: %s", out)
 	}
 }

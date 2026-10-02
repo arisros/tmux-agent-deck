@@ -15,10 +15,10 @@ import (
 	"io"
 	"strings"
 
-	"github.com/arisros/tmux-agent-deck/internal/machine"
+	"github.com/arisros/ytta/internal/machine"
 )
 
-// Payload holds the fields the deck reads. Everything else in the hook input,
+// Payload holds the fields ytta reads. Everything else in the hook input,
 // including prompts and tool arguments, is never decoded into memory we keep.
 type Payload struct {
 	Event            string          `json:"hook_event_name"`
@@ -29,7 +29,7 @@ type Payload struct {
 	Source           string          `json:"source"`
 	BackgroundTasks  json.RawMessage `json:"background_tasks"`
 	// Agent names the agent that sent the payload. It comes from the hook
-	// command line (deck hook --agent), never from the payload.
+	// command line (ytta hook --agent), never from the payload.
 	Agent string `json:"-"`
 }
 
@@ -93,7 +93,7 @@ func Map(p Payload, now int64) (Action, machine.Event) {
 	return Ignore, nil
 }
 
-// ToolClass is the tool name the deck keeps. MCP tool names embed the server
+// ToolClass is the tool name ytta keeps. MCP tool names embed the server
 // name, which can identify internal systems, so they collapse to "mcp".
 //
 // What is left is cut to the characters a tool name is made of: it is shown,

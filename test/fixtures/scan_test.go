@@ -21,10 +21,10 @@ var forbidden = append([]*regexp.Regexp{
 
 // privateWords are extra forbidden words that must not appear in this public
 // repo even as test data, such as the names of internal projects. They come
-// from DECK_LEAK_WORDS (comma separated), set locally and as a CI secret.
+// from YTTA_LEAK_WORDS (comma separated), set locally and as a CI secret.
 func privateWords() []*regexp.Regexp {
 	var out []*regexp.Regexp
-	for _, w := range strings.Split(os.Getenv("DECK_LEAK_WORDS"), ",") {
+	for _, w := range strings.Split(os.Getenv("YTTA_LEAK_WORDS"), ",") {
 		if w = strings.TrimSpace(w); w != "" {
 			out = append(out, regexp.MustCompile(`(?i)`+regexp.QuoteMeta(w)))
 		}

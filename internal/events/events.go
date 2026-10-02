@@ -1,5 +1,5 @@
-// Package events is the deck's log of state changes: one JSON line per change,
-// appended by hooks, focus changes and screen checks, and read by `deck
+// Package events is ytta's log of state changes: one JSON line per change,
+// appended by hooks, focus changes and screen checks, and read by `ytta
 // events`. It holds states, causes and tool names, never prompts or arguments.
 package events
 
@@ -75,7 +75,7 @@ func Rotate(root string) {
 	}
 }
 
-// Writer returns the function a Deck emits through. It rotates only when a
+// Writer returns the function a Ytta emits through. It rotates only when a
 // session begins, so no other hook pays for the stat.
 func Writer(root string) func(Event) {
 	return func(e Event) {

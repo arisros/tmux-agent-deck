@@ -3,7 +3,7 @@
 //
 // The statusLine input is documented, unlike the transcript files, whose
 // format Claude Code calls internal. Claude runs the command on every status
-// update, so the numbers stay fresh without the deck polling anything.
+// update, so the numbers stay fresh without ytta polling anything.
 package usage
 
 import (
@@ -18,7 +18,7 @@ import (
 	"time"
 )
 
-// Input is the part of Claude Code's statusLine JSON the deck reads.
+// Input is the part of Claude Code's statusLine JSON ytta reads.
 type Input struct {
 	SessionID string `json:"session_id"`
 	Model     struct {
@@ -46,7 +46,7 @@ type Window struct {
 }
 
 // ResetTime accepts unix seconds, unix milliseconds, or an RFC 3339 string:
-// the field's encoding is not spelled out, so the deck reads all of them.
+// the field's encoding is not spelled out, so ytta reads all of them.
 type ResetTime struct{ time.Time }
 
 // UnmarshalJSON implements json.Unmarshaler.
@@ -78,9 +78,9 @@ func (r ResetTime) MarshalJSON() ([]byte, error) {
 	return []byte(strconv.FormatInt(r.Unix(), 10)), nil
 }
 
-// Session is what the deck keeps per Claude session.
+// Session is what ytta keeps per Claude session.
 type Session struct {
-	// Pane is the tmux pane Claude runs in, for sessions the deck has no
+	// Pane is the tmux pane Claude runs in, for sessions ytta has no
 	// hook record for yet (agents discovered from their screen).
 	Pane          string   `json:"pane,omitempty"`
 	Model         string   `json:"model"`
@@ -138,7 +138,7 @@ func Record(dir string, in Input, pane string, now time.Time) error {
 	return nil
 }
 
-// Report is what an agent other than Claude Code tells the deck about a
+// Report is what an agent other than Claude Code tells ytta about a
 // session's usage: the same numbers, without Claude's statusLine around them.
 type Report struct {
 	SessionID string `json:"session_id"`

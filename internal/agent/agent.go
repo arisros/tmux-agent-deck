@@ -1,4 +1,4 @@
-// Package agent describes each coding agent the deck can track: how its hook
+// Package agent describes each coding agent ytta can track: how its hook
 // payloads map to machine events, what its screen proves when no hook fires,
 // and how its process is recognized.
 //
@@ -7,18 +7,18 @@
 package agent
 
 import (
-	"github.com/arisros/tmux-agent-deck/internal/hook"
-	"github.com/arisros/tmux-agent-deck/internal/machine"
+	"github.com/arisros/ytta/internal/hook"
+	"github.com/arisros/ytta/internal/machine"
 )
 
 // Agent is one kind of coding agent.
 type Agent struct {
-	// Name is what `deck hook --agent` and `deck install --<name>` take.
+	// Name is what `ytta hook --agent` and `ytta install --<name>` take.
 	Name string
 	// Map classifies one hook payload. now is unix seconds.
 	Map func(p hook.Payload, now int64) (hook.Action, machine.Event)
 	// Classify reads a screen into a machine.Screen kind, "" when the screen
-	// proves nothing. Nil for an agent whose screen the deck does not read.
+	// proves nothing. Nil for an agent whose screen ytta does not read.
 	Classify func(screen string) string
 	// Evidence is the screen line a verdict relied on, for the log.
 	Evidence func(screen string) string
