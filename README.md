@@ -295,14 +295,4 @@ What is left, the rules every change keeps, what was declined and why, and the n
 
 ytta started after trying both plugins on a large server. It differs in being event-driven end to end, keeping one sidebar per session, and repairing the endings no hook reports.
 
-## Renamed from tmux-agent-deck
-
-Up to 0.2.0 this was `tmux-agent-deck`, with a binary called `deck`. Nothing carries over under the old names, so to move:
-
-1. with the old binary, `deck uninstall --claude --apply`, and the same for any other agent you installed
-2. change the plugin line to `arisros/ytta`, and `@deck` to `@ytta` in your options and formats
-3. remove the old plugin directory, `prefix I`, then `ytta install` as in the [Quickstart](#quickstart)
-
-State moves with `mv ~/.local/state/tmux-agent-deck ~/.local/state/ytta`; without it ytta starts with an empty log.
-
 MIT. See [LICENSE](LICENSE).
