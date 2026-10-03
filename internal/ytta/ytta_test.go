@@ -298,6 +298,29 @@ const (
 ────────────────────────────────
   ⏸ manual mode on · ? for shortcuts · ← 4 agents
 `
+	// Captured from a 42 column pane: the question wraps and the plan dialog
+	// has no "Esc to cancel".
+	screenPlanNarrow = `  ────────────────────────────────────────
+   Claude has written up a plan and is
+   ready to execute. Would you like to
+   proceed?
+
+   ❯ 1. Yes, and use auto mode
+     2. Yes, manually approve edits
+     3. Tell Claude what to change
+        shift+tab to approve with this
+        feedback
+
+   ctrl+g to edit in Vim · ~/.claude/plan
+   s/sequential-jingling-kazoo.md
+`
+	// The input box holds a numbered reply: not a dialog.
+	screenTypingAList = `  2. rename the flag
+────────────────────────────────
+❯ 1. yes do that
+────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← 5 agents
+`
 	screenQuestion = `❯ 1. Blue
   2. Red
   6. Chat about this
@@ -316,6 +339,8 @@ func TestClassify(t *testing.T) {
 		screenBackgroundAgent: machine.ScreenWorking,
 		screenDialog:          machine.ScreenDialog,
 		screenQuestion:        machine.ScreenDialog,
+		screenPlanNarrow:      machine.ScreenDialog,
+		screenTypingAList:     machine.ScreenNoDialog,
 		// No end marker: never idle, whatever the footer says.
 		screenToolRunningAuto: machine.ScreenNoDialog,
 		screenSpinner:         machine.ScreenWorking,
@@ -608,10 +633,10 @@ func TestDiscoverUnknownClaudePanes(t *testing.T) {
 	f.screen = screenWorking
 	d := newYtta(t, f)
 	panes := []tmux.Pane{
-		{ID: "%1", Command: "2.1.284"},                   // unknown agent: discovered
-		{ID: "%2", Command: "2.1.284", State: "waiting"}, // known: left alone
-		{ID: "%3", Command: "zsh"},                       // not claude
-		{ID: "%4", Command: "2.1.284", Sidebar: "1"},     // ytta's own sidebar
+		{ID: "%1", Command: "2.1.284"},                              // unknown agent: discovered
+		{ID: "%2", Command: "2.1.284", State: "waiting", SID: "s2"}, // has a session: left alone
+		{ID: "%3", Command: "zsh"},                                  // not claude
+		{ID: "%4", Command: "2.1.284", Sidebar: "1"},                // ytta's own sidebar
 	}
 	if n := d.Discover(panes); n != 1 {
 		t.Fatalf("discovered %d panes, want 1", n)
@@ -621,6 +646,32 @@ func TestDiscoverUnknownClaudePanes(t *testing.T) {
 	}
 	if n := d.Discover([]tmux.Pane{{ID: "%1", Command: "2.1.284", State: "running"}}); n != 0 {
 		t.Errorf("rediscovered a known pane")
+	}
+}
+
+// A session opened before the hooks were installed fires none until its next
+// prompt or tool, so a long turn has to be followed on the screen.
+func TestDiscoverFollowsPanesWithoutASession(t *testing.T) {
+	steps := []struct{ from, screen, want string }{
+		{machine.Idle, screenWorking, machine.Running},
+		{machine.Idle, screenPlanNarrow, machine.Waiting},
+		{machine.Waiting, screenToolRunningAuto, machine.Running},
+		{machine.Running, screenIdle, machine.Idle},
+		{machine.Running, screenToolRunningAuto, machine.Running},
+		{machine.Idle, screenIdleAuto, machine.Idle},
+	}
+	for _, s := range steps {
+		f := newFake()
+		f.screen = s.screen
+		d := newYtta(t, f)
+		n := d.Discover([]tmux.Pane{{ID: "%1", Command: "2.1.284", State: s.from}})
+		got := f.state("%1")
+		if got == "" {
+			got = s.from
+		}
+		if got != s.want || (n == 1) != (s.from != s.want) {
+			t.Errorf("%s on %q: state %q, %d set, want %q", s.from, s.screen, got, n, s.want)
+		}
 	}
 }
 
