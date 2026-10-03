@@ -1,6 +1,6 @@
 <h1 align="center">ytta</h1>
 
-<p align="center"><b>yang tmux tmux aja</b> ("just tmux, nothing else"). An agent control plane for tmux: see which coding agents need you and why, answer them from where you are, and script them. Claude Code, Codex, Gemini CLI and opencode, across every session.</p>
+<p align="center"><b>your tmux terminal agent 😉</b>. An agent control plane for tmux: see which coding agents need you and why, answer them from where you are, and script them. Claude Code, Codex, Gemini CLI and opencode, across every session.</p>
 
 <p align="center">
   <a href="https://github.com/arisros/ytta/actions/workflows/ci.yml"><img src="https://github.com/arisros/ytta/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
