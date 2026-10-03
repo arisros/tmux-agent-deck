@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.1](https://github.com/arisros/ytta/compare/v0.3.0...v0.3.1) (2026-10-03)
+
+
+### Fixed
+
+* **install:** keep symlinked settings and survive a moved plugin ([#15](https://github.com/arisros/ytta/issues/15)) ([6facdba](https://github.com/arisros/ytta/commit/6facdba73ce50f6062956b47938185a35414eca5))
+* **screen:** follow agents without a session and see narrow dialogs ([#16](https://github.com/arisros/ytta/issues/16)) ([11b4f13](https://github.com/arisros/ytta/commit/11b4f13eed26b1a9447dd7fbb4f12ed25e602267))
+
 ## [0.3.0](https://github.com/arisros/ytta/compare/v0.2.0...v0.3.0) (2026-10-02)
 
 
