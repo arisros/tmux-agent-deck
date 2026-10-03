@@ -211,3 +211,20 @@ func TestMarkerFindsCommandsAtAnyPath(t *testing.T) {
 		t.Errorf("not removed:\n%s", out)
 	}
 }
+
+func TestCommandsListsOnlyYttaEntries(t *testing.T) {
+	out, err := Add([]byte(settings), []string{"Stop", "SessionStart"}, Hook{Command: "/bin/ytta hook # ytta"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Commands(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0] != "/bin/ytta hook # ytta" || got[1] != got[0] {
+		t.Errorf("Commands = %q", got)
+	}
+	if got, _ := Commands([]byte(settings)); len(got) != 0 {
+		t.Errorf("foreign hooks reported as ytta's: %q", got)
+	}
+}

@@ -144,6 +144,41 @@ func Owned(settings []byte) ([]string, error) {
 	return events, nil
 }
 
+// Commands returns the command of every ytta hook entry, in file order.
+func Commands(settings []byte) ([]string, error) {
+	root, err := parseObject(settings)
+	if err != nil {
+		return nil, err
+	}
+	raw, ok := root.get("hooks")
+	if !ok {
+		return nil, nil
+	}
+	hooks, err := parseObject(raw)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, ev := range hooks {
+		var groups []struct {
+			Hooks []struct {
+				Command string `json:"command"`
+			} `json:"hooks"`
+		}
+		if err := json.Unmarshal(ev.Value, &groups); err != nil {
+			return nil, fmt.Errorf("hooks.%s: %w", ev.Key, err)
+		}
+		for _, g := range groups {
+			for _, h := range g.Hooks {
+				if strings.Contains(h.Command, Marker) {
+					out = append(out, h.Command)
+				}
+			}
+		}
+	}
+	return out, nil
+}
+
 func withoutYtta(groupRaw json.RawMessage) (json.RawMessage, bool, error) {
 	group, err := parseObject(groupRaw)
 	if err != nil {
