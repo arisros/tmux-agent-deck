@@ -1,4 +1,9 @@
-<h1 align="center">ytta</h1>
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/arisros/ytta/main/docs/img/logo-lockup-dark.svg">
+    <img alt="ytta" src="https://raw.githubusercontent.com/arisros/ytta/main/docs/img/logo-lockup-light.svg" width="188">
+  </picture>
+</h1>
 
 <p align="center"><b>yang tmux tmux aja</b> ("just tmux, nothing else"). An agent control plane for tmux: see which coding agents need you and why, answer them from where you are, and script them. Claude Code, Codex, Gemini CLI and opencode, across every session.</p>
 
