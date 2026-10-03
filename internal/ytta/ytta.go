@@ -211,38 +211,36 @@ func (d *Ytta) ReconcileStale(panes []tmux.Pane, minAge time.Duration) {
 	}
 }
 
-// Discover publishes a state for every agent pane ytta has not heard
-// from yet, read from its screen. An agent idle at its prompt when the hooks
-// were installed fires no hook until it is used again, and would otherwise
-// stay invisible. Only agents recognizable by their process name can be
-// found this way. The state has no session record behind it; the session's
-// next hook creates one and takes over. It returns how many panes it set.
+// Discover publishes a state for every agent pane ytta has no session for,
+// read from its screen. An agent that was already open when the hooks were
+// installed fires no hook until its next prompt or tool, and would otherwise
+// stay invisible, or keep the state it was first found in for the rest of a
+// long turn. Only agents recognizable by their process name can be found
+// this way. The state has no session record behind it; the session's next
+// hook creates one and takes over. It returns how many panes it set.
 func (d *Ytta) Discover(panes []tmux.Pane) int {
 	now := strconv.FormatInt(d.Now().Unix(), 10)
 	var cmds [][]string
 	var found []events.Event
 	for _, p := range panes {
 		a, ok := detect(p.Command)
-		if p.State != "" || p.Sidebar != "" || !ok {
+		if p.SID != "" || p.Sidebar != "" || !ok {
 			continue
 		}
 		screen, err := d.Tmux.Capture(p.ID)
 		if err != nil {
 			continue
 		}
-		state := machine.Idle // a fresh or quiet session has no end marker yet
-		switch a.Screen(screen) {
-		case machine.ScreenWorking:
-			state = machine.Running
-		case machine.ScreenDialog:
-			state = machine.Waiting
+		state := screenState(p.State, a.Screen(screen))
+		if state == p.State {
+			continue
 		}
 		cmds = append(cmds,
 			[]string{"set-option", "-p", "-t", p.ID, "@ytta_state", state},
 			[]string{"set-option", "-p", "-t", p.ID, "@ytta_since", now},
 			[]string{"set-option", "-p", "-t", p.ID, "@ytta_agent", a.Name},
 			remember(p.ID))
-		found = append(found, events.Event{Pane: p.ID, Kind: events.Discover, To: state, Source: machine.SourceScreen})
+		found = append(found, events.Event{Pane: p.ID, Kind: events.Discover, From: p.State, To: state, Source: machine.SourceScreen})
 	}
 	if len(cmds) == 0 {
 		return 0
@@ -255,6 +253,23 @@ func (d *Ytta) Discover(panes []tmux.Pane) int {
 		d.emit(e)
 	}
 	return len(found)
+}
+
+// screenState is the state a pane without a session moves to from what its
+// screen shows. A screen that proves nothing keeps the state, idle for a
+// pane seen for the first time: a fresh or quiet session has no end marker.
+func screenState(state, kind string) string {
+	switch {
+	case kind == machine.ScreenWorking:
+		return machine.Running
+	case kind == machine.ScreenDialog:
+		return machine.Waiting
+	case kind == machine.ScreenIdle, state == "":
+		return machine.Idle
+	case kind == machine.ScreenNoDialog && state == machine.Waiting:
+		return machine.Running
+	}
+	return state
 }
 
 func detect(command string) (agent.Agent, bool) {

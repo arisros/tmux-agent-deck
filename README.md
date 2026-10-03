@@ -121,7 +121,8 @@ The full machine, generated from the code: [docs/state-machine.md](docs/state-ma
 | a long command after you approved it | nothing until it ends | a waiting agent with no dialog on screen goes back to running |
 | background tasks or subagents still running at `Stop` | `Stop` reports them | stays running; Claude resumes by itself when they finish |
 | a turn Claude resumed after background work | no `Stop` at all | `idle_prompt` ends it |
-| an agent that was idle when you installed the plugin | none yet | read from its screen once, then hooks take over |
+| an agent already open when you installed the plugin | none until its next prompt or tool | followed on its screen at every view refresh, then hooks take over |
+| a plan or permission prompt in a narrow pane | the question wraps, and the plan prompt has no `Esc to cancel` | the selected choice, `❯ 1. Yes`, marks the dialog |
 | an agent that crashed or was killed | none | each hook remembers the pane's foreground command; once it changes, the agent is hidden at once and forgotten when a view opens |
 
 The screen is only trusted for Claude's explicit markers (its dialogs, the spinner line, `esc to interrupt`, `Interrupted`, `· done`). A footer that merely looks quiet proves nothing: Claude hides `esc to interrupt` while a tool runs in auto mode.

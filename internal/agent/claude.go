@@ -60,7 +60,7 @@ func classifyClaude(screen string) string {
 		}
 	}
 	switch {
-	case has("Do you want to proceed?"), has("Enter to select"), has("Esc to cancel"):
+	case has("Do you want to proceed?"), has("Enter to select"), has("Esc to cancel"), optionCursor(tail):
 		return machine.ScreenDialog
 	case has("esc to interrupt"), has("queued messages"), strings.Contains(footer, "esc to"), busyBelow:
 		return machine.ScreenWorking
@@ -85,6 +85,21 @@ func classifyClaude(screen string) string {
 		return machine.ScreenIdle
 	}
 	return machine.ScreenNoDialog
+}
+
+// option matches a dialog's selected choice, "❯ 1. Yes".
+var option = regexp.MustCompile(`^\s*❯\s+\d+\.\s`)
+
+// optionCursor finds a selected choice that is not the input box, which
+// always sits right under a separator. A narrow pane wraps the question and
+// the plan dialog has no "Esc to cancel", so the choice is the only marker.
+func optionCursor(tail []string) bool {
+	for i, l := range tail {
+		if option.MatchString(l) && (i+1 == len(tail) || strings.Count(tail[i+1], "─") < 10) {
+			return true
+		}
+	}
+	return false
 }
 
 // spinner matches Claude's working line, "✽ Mustering… (4m 8s · ↓ 13.3k tokens)".
