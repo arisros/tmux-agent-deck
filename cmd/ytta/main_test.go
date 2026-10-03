@@ -113,3 +113,70 @@ func TestWriteWithBackupKeepsModeAndPrunes(t *testing.T) {
 		t.Errorf("%d backups kept, want 10", len(left))
 	}
 }
+
+func TestGuardedWritesHomeRelativePaths(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	for bin, want := range map[string]string{
+		home + "/dotfiles/ytta/bin/ytta": `test -x "$HOME"/dotfiles/ytta/bin/ytta && "$HOME"/dotfiles/ytta/bin/ytta hook; exit 0 # ytta`,
+		home + "/my tools/ytta":          `test -x "$HOME"'/my tools/ytta' && "$HOME"'/my tools/ytta' hook; exit 0 # ytta`,
+		"/opt/ytta":                      `test -x /opt/ytta && /opt/ytta hook; exit 0 # ytta`,
+	} {
+		got := guarded(bin, "hook")
+		if got != want {
+			t.Errorf("guarded(%q) = %q\nwant %q", bin, got, want)
+		}
+		if back := guardedBinary(got); back != bin {
+			t.Errorf("guardedBinary(%q) = %q, want %q", got, back, bin)
+		}
+	}
+	for _, bin := range []string{"/opt/it's/ytta", home + "/a b'c/ytta"} {
+		if back := guardedBinary(wrapping(bin, "ZWNobw==")); back != bin {
+			t.Errorf("guardedBinary(wrapping(%q)) = %q", bin, back)
+		}
+	}
+	if got := guardedBinary("rtk hook claude"); got != "" {
+		t.Errorf("unguarded command gave %q", got)
+	}
+}
+
+func TestGoneBinariesFindsAMovedPlugin(t *testing.T) {
+	dir := t.TempDir()
+	here := filepath.Join(dir, "ytta")
+	if err := os.WriteFile(here, nil, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	moved := filepath.Join(dir, "old", "ytta")
+	settings := `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"` + guarded(here, "hook") + `"}]}],` +
+		`"SessionStart":[{"hooks":[{"type":"command","command":"` + guarded(moved, "hook") + `"}]}]},` +
+		`"statusLine":{"type":"command","command":"` + guarded(moved, "statusline") + `"}}`
+	got := goneBinaries([]byte(settings))
+	if len(got) != 1 || got[0] != moved {
+		t.Errorf("goneBinaries = %q, want [%q]", got, moved)
+	}
+}
+
+func TestWriteWithBackupKeepsASymlink(t *testing.T) {
+	t.Setenv("YTTA_STATE_DIR", filepath.Join(t.TempDir(), "sessions"))
+	dir := t.TempDir()
+	target := filepath.Join(dir, "dotfiles", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "settings.json")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writeWithBackup(link, []byte("{}"), []byte(`{"n":1}`)); err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Lstat(link); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("settings.json is no longer a symlink (err %v)", err)
+	}
+	if b, _ := os.ReadFile(target); string(b) != `{"n":1}` {
+		t.Errorf("target = %q, want the new content", b)
+	}
+}

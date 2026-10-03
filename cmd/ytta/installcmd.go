@@ -284,15 +284,52 @@ var liveEvents = []string{
 // trailing comment is how uninstall recognizes ytta's commands, wherever
 // the binary lives.
 func guarded(bin, args string) string {
-	q := shellQuote(bin)
+	q := shellPath(bin)
 	return "test -x " + q + " && " + q + " " + args + "; exit 0 # " + install.Marker
+}
+
+// guardedBinary is the binary a guarded or wrapping command tests for, with
+// $HOME expanded, or "" when the command has no such test.
+func guardedBinary(command string) string {
+	_, rest, ok := strings.Cut(command, "test -x ")
+	if !ok {
+		return ""
+	}
+	home, _ := os.UserHomeDir()
+	var b strings.Builder
+	for i := 0; i < len(rest) && rest[i] != ' ' && rest[i] != ';'; i++ {
+		switch rest[i] {
+		case '\'':
+			end := strings.IndexByte(rest[i+1:], '\'')
+			if end < 0 {
+				return ""
+			}
+			b.WriteString(rest[i+1 : i+1+end])
+			i += end + 1
+		case '\\':
+			if i+1 < len(rest) {
+				i++
+				b.WriteByte(rest[i])
+			}
+		case '"':
+			end := strings.IndexByte(rest[i+1:], '"')
+			if end < 0 {
+				return ""
+			}
+			b.WriteString(strings.ReplaceAll(rest[i+1:i+1+end], "$HOME", home))
+			i += end + 1
+		default:
+			b.WriteByte(rest[i])
+		}
+	}
+	return b.String()
 }
 
 // wrapping is the statusLine command that runs the user's own line through
 // ytta. Without the binary it runs their line directly, so removing the
 // plugin never blanks a status line.
 func wrapping(bin, original64 string) string {
-	q := shellQuote(bin)
+	q := shellPath(bin)
 	return "if test -x " + q + "; then " + q + " statusline " + install.WrapFlag + " " + original64 +
 		`; else sh -c "$(echo ` + original64 + ` | base64 -d)"; fi # ` + install.Marker
 }
@@ -321,6 +358,16 @@ func selfPath() (string, error) {
 	return p, nil
 }
 
+// shellPath writes a path under the home directory as "$HOME"/..., so a
+// settings file shared between machines finds the binary wherever home is.
+func shellPath(p string) string {
+	home, err := os.UserHomeDir()
+	if err == nil && home != "" && home != "/" && strings.HasPrefix(p, home+"/") {
+		return `"$HOME"` + shellQuote(strings.TrimPrefix(p, home))
+	}
+	return shellQuote(p)
+}
+
 func shellQuote(s string) string {
 	if !strings.ContainsAny(s, " '\"$`\\") {
 		return s
@@ -346,7 +393,12 @@ func printDiff(before, after []byte) {
 
 // writeWithBackup keeps the previous file, then replaces it atomically with
 // the same permissions so a crash never leaves Claude a half-written file.
+// A symlinked file, as dotfiles keep settings, is written at its target so
+// the link survives.
 func writeWithBackup(path string, before, after []byte) (string, error) {
+	if real, err := filepath.EvalSymlinks(path); err == nil {
+		path = real
+	}
 	mode := os.FileMode(0o600)
 	if fi, err := os.Stat(path); err == nil {
 		mode = fi.Mode().Perm()

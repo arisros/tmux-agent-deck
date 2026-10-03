@@ -72,11 +72,14 @@ func runDoctor(_ []string) error {
 				missing = append(missing, e)
 			}
 		}
+		gone := goneBinaries(settings)
 		switch {
 		case recording:
 			check(false, "Claude hooks", "recorder installed; run ytta install --claude --apply for the live hooks")
 		case len(missing) > 0:
 			check(false, "Claude hooks", "missing "+strings.Join(missing, ", ")+"; run ytta install --claude --apply")
+		case len(gone) > 0:
+			check(false, "Claude hooks", "they call "+strings.Join(gone, ", ")+", which is gone; run ytta install --claude --apply")
 		default:
 			check(true, "Claude hooks", strconv.Itoa(len(events))+" events")
 		}
@@ -151,6 +154,33 @@ func runDoctor(_ []string) error {
 		return fmt.Errorf("some checks failed")
 	}
 	return nil
+}
+
+// goneBinaries lists the ytta binaries the hooks and statusLine in settings
+// call but that do not exist. Their guard turns a missing binary into a
+// silent no-op, so nothing else would notice a moved or renamed plugin.
+func goneBinaries(settings []byte) []string {
+	commands, _ := install.Commands(settings)
+	var parsed struct {
+		StatusLine *struct {
+			Command string `json:"command"`
+		} `json:"statusLine"`
+	}
+	if json.Unmarshal(settings, &parsed) == nil && parsed.StatusLine != nil &&
+		strings.Contains(parsed.StatusLine.Command, install.Marker) {
+		commands = append(commands, parsed.StatusLine.Command)
+	}
+	var gone []string
+	for _, c := range commands {
+		bin := guardedBinary(c)
+		if bin == "" || contains(gone, bin) {
+			continue
+		}
+		if _, err := os.Stat(bin); err != nil {
+			gone = append(gone, bin)
+		}
+	}
+	return gone
 }
 
 // tmuxVersion finds "3.5" in "tmux 3.5a", "tmux next-3.6" or "3.3".
